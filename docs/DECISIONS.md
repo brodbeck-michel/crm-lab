@@ -7410,3 +7410,56 @@ backfill), porque a edição da proposta é travada fora de `novo_contato`/`orca
 **Impacto:** SCHEMA §35/§51 (migrações 070 e 071), API_CONTRACTS §13 (campos novos, 4 rotas) e §3
 (`doctorId`), API_ERRORS (`DOCTOR_SPECIALTY_ALREADY_EXISTS`), BUSINESS_RULES §12b, PAGES §22/§22b e
 formulário de proposta, SERVICES §30.
+
+## 2026-11-21 — Finalidade da visita (CRMLAB-190, épico CRMLAB-187)
+
+### D-330: Finalidade da visita cadastrada por laboratório; a cor da agenda passa a ser da finalidade
+**Contexto:** a visita só tinha o **modo** do contato (`type`: presencial, online, telefone,
+evento) e a pauta em texto livre. O laboratório usa a agenda para coisas de natureza diferente
+(visita de propaganda, pedido de patrocínio, pedido de material, liberar acesso a exames,
+compromisso interno) e quer ver isso de longe na grade — e, mais tarde, num relatório. A D-262
+item 6 pintava o bloco pela cor do **status**.
+**Decisão (Michel, escopo aprovado do CRMLAB-190):**
+1. **Finalidade é cadastro do laboratório** (`visit_purposes`, por tenant): nome (até 60, único
+   no laboratório sem diferenciar maiúscula), **cor**, ativo/inativo e ordem. Sem exclusão:
+   inativa. Só **gestor e admin** criam e editam; todos os papéis do laboratório leem (a agenda
+   precisa).
+2. **Cor de uma paleta fixa de 8 tokens**, nunca hex no banco nem na API: a coluna guarda a
+   **chave** (`azul`, `verde`, `agua`, `violeta`, `ambar`, `rosa`, `terracota`, `cinza`) e o
+   front pinta com `--color-purpose-<chave>-bg|ink|dot` (DESIGN_TOKENS.md). Paleta fechada
+   garante contraste (texto ≥ 4,5:1 sobre o fundo) sem o laboratório escolher cor ilegível. Os
+   tons do tema escuro ficam declarados em `[data-theme='dark']` — inertes hoje (o produto não
+   tem tema escuro), prontos quando tiver.
+3. **Semente por laboratório:** Visita (azul), Solicitação de patrocínio (verde), Solicitação de
+   material (água), Acesso a exames (violeta) e Compromisso interno (cinza). A migração 073 semeia
+   os laboratórios que já existem; os novos recebem pelo **trigger** `AFTER INSERT ON tenants`
+   (`seed_visit_purposes`), que cobre o onboarding do console, os seeds e as factories de teste
+   sem cada caminho precisar lembrar. Idempotente (`ON CONFLICT DO NOTHING`).
+4. **`purposeId` obrigatório na visita** (`doctor_visits.purpose_id NOT NULL`): exigido no
+   `POST /visits`, editável no `PATCH` enquanto `agendada`. A migração dá **Visita** a todas as
+   visitas existentes. Finalidade **ativa e do mesmo laboratório** ao criar e ao **trocar**; a
+   visita que já tem uma finalidade depois inativada continua com ela, exibida e editável nos
+   outros campos (mesma regra do médico/responsável inativo, D-256). Inexistente, inativa ou de
+   outro laboratório → `VALIDATION_ERROR` com `fields.purposeId`.
+5. **Modo (`type`) continua** — responde "como", a finalidade responde "para quê".
+6. **A visita devolve `purpose: { id, name, color }`** (agenda, detalhe e a linha do tempo do
+   médico), para nenhuma tela precisar cruzar com o cadastro.
+7. **Agenda (revê a D-262 item 6):** o bloco da Semana, a linha da Lista e o cartão do celular
+   ganham a **cor da finalidade**. O status sai da cor e vira **selo com ícone e texto
+   acessível**: relógio = agendada, ✓ = realizada, ✕ = cancelada, ⊘ = médico não recebeu; e
+   cancelada/não recebeu continuam com o **nome riscado**, agora com **opacidade reduzida**. Texto
+   do bloco: "HH:MM Médico" e, abaixo, a finalidade. O **resumo da semana** (coluna lateral) e os
+   **chips de status** continuam pelas cores de status (`--color-visit-*`), que seguem existindo.
+8. **Filtro por finalidade:** chips de multisseleção (como os de status: todos ligados, clicar
+   desliga, com contagem da semana), aplicados na tela sobre a semana (D-262 item 4). O
+   `GET /visits` aceita também `purposeId` (uma finalidade) para quem consome a API direto.
+9. **Tela de gestão em Cadastros** (`/settings/visit-purposes`, aba "Finalidades", gestor+), como
+   Convênios e Atendentes — é cadastro do laboratório, não da agenda.
+**Auditoria:** `create_visit_purpose`, `update_visit_purpose` (`entityType: "visit_purpose"`);
+`purposeId` entra no diff da visita (`create_visit`/`update_visit`).
+**Impacto:** SCHEMA §36a (migração 073), API_CONTRACTS §14 (+ "Finalidades da visita"),
+BUSINESS_RULES §13, DESIGN_TOKENS (paleta de finalidade), PAGES §23 + Cadastros, SERVICES §31;
+`shared/types/visit-purpose.types.ts`, `visit.types.ts`, `doctor-timeline.types.ts`;
+`backend/src/{controllers,services,repositories}/visit-purpose.*`, `visit.*`,
+`doctor-interaction.repository.ts`; `frontend/src/pages/Settings/VisitPurposes.tsx`,
+`pages/Visitation/*`, `styles/tokens.css`, `tailwind.config.js`, `routes/`.

@@ -182,13 +182,14 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
 });
 
 describe('Cadastros — abas por perfil (CRMLAB-143)', () => {
-  it('admin vê as 5 abas, na ordem pedida', () => {
+  it('admin vê as 6 abas, na ordem pedida', () => {
     expect(registerTabsFor('admin').map((t) => [t.label, t.path])).toEqual([
       ['Usuários', '/settings/users'],
       ['Exames', '/catalog'],
       ['Respostas rápidas', '/quick-replies'],
       ['Atendentes', '/settings/attendants'],
       ['Convênios', '/settings/insurances'],
+      ['Finalidades', '/settings/visit-purposes'],
     ]);
   });
 
@@ -198,6 +199,7 @@ describe('Cadastros — abas por perfil (CRMLAB-143)', () => {
       'Respostas rápidas',
       'Atendentes',
       'Convênios',
+      'Finalidades',
     ]);
     expect(registerTabsFor('attendant').map((t) => t.label)).toEqual(['Exames', 'Respostas rápidas']);
     expect(registerTabsFor('platform_operator')).toEqual([]);

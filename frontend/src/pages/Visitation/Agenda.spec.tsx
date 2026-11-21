@@ -3,9 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Doctor, ListVisitsResponse, VisitDetail } from '@crm-lab/shared';
+import type { Doctor, ListVisitsResponse, VisitDetail, VisitPurpose } from '@crm-lab/shared';
 import { conversationsApi } from '@/api/conversations';
 import { doctorsApi } from '@/api/doctors';
+import { visitPurposesApi } from '@/api/visit-purposes';
 import { visitsApi } from '@/api/visits';
 import { ToastProvider } from '@/components/ui';
 import { useAuthStore } from '@/stores/auth.store';
@@ -84,6 +85,7 @@ function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
     responsible: { id: 'u-bia', name: 'Bia Atendente' },
     scheduledAt: new Date(2026, 9, 6, 9, 30).toISOString(),
     type: 'presencial',
+    purpose: { id: 'p-visita', name: 'Visita', color: 'azul' },
     agenda: 'Apresentar o painel de check-up',
     status: 'agendada',
     statusReason: null,
@@ -105,6 +107,23 @@ function visit(overrides: Partial<VisitDetail> = {}): VisitDetail {
     ...overrides,
   };
 }
+
+/** Cadastro de finalidades (CRMLAB-190): duas ativas e uma inativa. */
+function purpose(overrides: Partial<VisitPurpose> & Pick<VisitPurpose, 'id' | 'name' | 'color'>): VisitPurpose {
+  return {
+    isActive: true,
+    sortOrder: 0,
+    createdAt: '2026-10-01T10:00:00.000Z',
+    updatedAt: '2026-10-01T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+const PURPOSES: VisitPurpose[] = [
+  purpose({ id: 'p-visita', name: 'Visita', color: 'azul', sortOrder: 1 }),
+  purpose({ id: 'p-patrocinio', name: 'Solicitação de patrocínio', color: 'verde', sortOrder: 2 }),
+  purpose({ id: 'p-antiga', name: 'Finalidade antiga', color: 'rosa', sortOrder: 3, isActive: false }),
+];
 
 function listResponse(visits: VisitDetail[] = [visit()]): ListVisitsResponse {
   return { visits, truncated: false };
@@ -156,6 +175,7 @@ describe('Agenda (/visitation/agenda)', () => {
     mockViewport(1024);
     listMock.mockResolvedValue(listResponse());
     getMock.mockResolvedValue(visit());
+    vi.spyOn(visitPurposesApi, 'list').mockResolvedValue({ purposes: PURPOSES });
     vi.mocked(doctorsApi.list).mockResolvedValue({
       doctors: [julia],
       pagination: { page: 1, limit: 100, total: 1, totalPages: 1 },
@@ -315,7 +335,16 @@ describe('Agenda (/visitation/agenda)', () => {
     expect(await dialog.findByText('Escolha o médico')).toBeInTheDocument();
     expect(createMock).not.toHaveBeenCalled();
 
+    expect(await dialog.findByText('Escolha a finalidade')).toBeInTheDocument();
+
     await user.selectOptions(dialog.getByLabelText('Médico'), 'doc-1');
+    // Finalidade obrigatória (CRMLAB-190): só as ativas são oferecidas.
+    const purposeSelect = dialog.getByLabelText('Finalidade');
+    await waitFor(() =>
+      expect(within(purposeSelect).getByRole('option', { name: 'Solicitação de patrocínio' })).toBeInTheDocument(),
+    );
+    expect(within(purposeSelect).queryByRole('option', { name: /Finalidade antiga/ })).not.toBeInTheDocument();
+    await user.selectOptions(purposeSelect, 'p-patrocinio');
     await user.selectOptions(dialog.getByLabelText('Tipo'), 'telefone');
     await user.type(dialog.getByLabelText('Objetivo/pauta'), 'Retorno do kit');
     await user.click(dialog.getByRole('button', { name: 'Agendar' }));
@@ -326,9 +355,98 @@ describe('Agenda (/visitation/agenda)', () => {
         responsibleId: 'u-bia',
         scheduledAt: new Date(2026, 9, 8, 14, 0).toISOString(),
         type: 'telefone',
+        purposeId: 'p-patrocinio',
         agenda: 'Retorno do kit',
       }),
     );
+  });
+
+  it('bloco na cor da finalidade, com o nome dela e o status em ícone (CRMLAB-190)', async () => {
+    const patrocinio = visit({
+      id: 'v-2',
+      scheduledAt: new Date(2026, 9, 8, 15, 0).toISOString(),
+      purpose: { id: 'p-patrocinio', name: 'Solicitação de patrocínio', color: 'verde' },
+      status: 'realizada',
+    });
+    const cancelada = visit({
+      id: 'v-3',
+      scheduledAt: new Date(2026, 9, 9, 11, 0).toISOString(),
+      status: 'cancelada',
+      statusReason: 'Férias',
+    });
+    listMock.mockResolvedValue(listResponse([visit(), patrocinio, cancelada]));
+    renderPage();
+    const week = within(await screen.findByTestId('agenda-week'));
+
+    const first = await week.findByRole('button', { name: /09:30 Dra\. Júlia Costa — Agendada · Visita/ });
+    expect(first).toHaveAttribute('data-purpose-color', 'azul');
+    expect(first.className).toContain('bg-purpose-azul-bg');
+    expect(within(first).getByText('Visita')).toBeInTheDocument();
+    expect(within(first).getByTestId('visit-status-icon')).toHaveAttribute('data-status', 'agendada');
+
+    const second = week.getByRole('button', { name: /15:00 Dra\. Júlia Costa — Realizada · Solicitação de patrocínio/ });
+    expect(second).toHaveAttribute('data-purpose-color', 'verde');
+    expect(second.className).toContain('bg-purpose-verde-bg');
+    expect(within(second).getByTestId('visit-status-icon')).toHaveAttribute('data-status', 'realizada');
+    expect(within(second).getByText('Realizada')).toHaveClass('sr-only');
+
+    const third = week.getByRole('button', { name: /11:00 Dra\. Júlia Costa — Cancelada/ });
+    expect(third.className).toContain('opacity-60');
+    expect(within(third).getByText('Dra. Júlia Costa')).toHaveClass('line-through');
+  });
+
+  it('chips de finalidade filtram na tela e contam a semana; a inativa só aparece se tiver visita', async () => {
+    const user = userEvent.setup({ delay: null });
+    const patrocinio = visit({
+      id: 'v-2',
+      scheduledAt: new Date(2026, 9, 8, 15, 0).toISOString(),
+      purpose: { id: 'p-patrocinio', name: 'Solicitação de patrocínio', color: 'verde' },
+    });
+    listMock.mockResolvedValue(listResponse([visit(), patrocinio]));
+    renderPage();
+    const week = within(await screen.findByTestId('agenda-week'));
+    await week.findByRole('button', { name: /15:00 .* Solicitação de patrocínio/ });
+
+    const filters = within(screen.getByTestId('agenda-filters'));
+    const group = within(await filters.findByRole('group', { name: 'Finalidade' }));
+    const chip = group.getByRole('button', { name: /^Solicitação de patrocínio\s*1$/ });
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    expect(group.getByRole('button', { name: /^Visita\s*1$/ })).toBeInTheDocument();
+    expect(group.queryByRole('button', { name: /Finalidade antiga/ })).not.toBeInTheDocument();
+
+    await user.click(chip);
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+    expect(week.queryByRole('button', { name: /Solicitação de patrocínio/ })).not.toBeInTheDocument();
+    expect(week.getByRole('button', { name: /09:30 .* Visita/ })).toBeInTheDocument();
+
+    await user.click(chip);
+    expect(week.getByRole('button', { name: /Solicitação de patrocínio/ })).toBeInTheDocument();
+    // O filtro é local: a semana continua vindo inteira.
+    expect(listMock).toHaveBeenLastCalledWith({
+      from: MONDAY.toISOString(),
+      to: NEXT_MONDAY.toISOString(),
+    });
+  });
+
+  it('visita com finalidade inativa: chip aparece e a edição a mantém como "(inativa)"', async () => {
+    const user = userEvent.setup({ delay: null });
+    const antiga = visit({ purpose: { id: 'p-antiga', name: 'Finalidade antiga', color: 'rosa' } });
+    listMock.mockResolvedValue(listResponse([antiga]));
+    getMock.mockResolvedValue(antiga);
+    renderPage();
+    const filters = within(await screen.findByTestId('agenda-filters'));
+    expect(
+      await filters.findByRole('button', { name: /^Finalidade antiga\s*1$/ }),
+    ).toBeInTheDocument();
+
+    const week = within(screen.getByTestId('agenda-week'));
+    await user.click(await week.findByRole('button', { name: /Finalidade antiga/ }));
+    const dialog = within(await screen.findByRole('dialog', { name: 'Visita' }));
+    expect(dialog.getByTestId('visit-purpose')).toHaveTextContent('Finalidade antiga');
+    await user.click(dialog.getByRole('button', { name: 'Editar' }));
+    const edit = within(await screen.findByRole('dialog', { name: 'Editar visita' }));
+    expect(edit.getByLabelText('Finalidade')).toHaveValue('p-antiga');
+    expect(edit.getByRole('option', { name: 'Finalidade antiga (inativa)' })).toBeInTheDocument();
   });
 
   it('abrir a visita mostra o histórico de datas; reagendar manda a nova data', async () => {

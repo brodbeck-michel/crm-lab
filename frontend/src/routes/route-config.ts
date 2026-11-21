@@ -102,6 +102,8 @@ export const REGISTER_TABS: readonly RegisterTab[] = [
   { path: '/quick-replies', label: 'Respostas rápidas', requiredRoles: TENANT_ROLES },
   { path: '/settings/attendants', label: 'Atendentes', requiredRoles: MANAGER_PLUS },
   { path: '/settings/insurances', label: 'Convênios', requiredRoles: MANAGER_PLUS },
+  // CRMLAB-190 (D-330): finalidades da visita médica.
+  { path: '/settings/visit-purposes', label: 'Finalidades', requiredRoles: MANAGER_PLUS },
 ] as const;
 
 /** Abas de Cadastros visíveis para o perfil, na ordem de exibição. */
@@ -267,6 +269,12 @@ export const APP_ROUTES: readonly AppRoute[] = [
   {
     path: '/settings/attendants',
     label: 'Atendentes',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: false,
+  },
+  {
+    path: '/settings/visit-purposes',
+    label: 'Finalidades de visita',
     requiredRoles: MANAGER_PLUS,
     inSidebar: false,
   },

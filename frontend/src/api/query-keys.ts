@@ -217,6 +217,8 @@ export const queryKeys = {
   holidays: (year: number) => ['settings', 'holidays', year] as const,
   /** ['settings', 'business-calendar'] — `/settings/business-calendar` (§6e, CRMLAB-84) */
   businessCalendar: () => ['settings', 'business-calendar'] as const,
+  /** ['settings', 'visit-purposes'] — finalidades da visita (§14, CRMLAB-190) */
+  visitPurposes: () => ['settings', 'visit-purposes'] as const,
 
   /** ['doctors', filters] — `/visitation/doctors` (§22, CRMLAB-86) */
   doctors: (filters?: ListDoctorsQuery) => ['doctors', filters ?? {}] as const,

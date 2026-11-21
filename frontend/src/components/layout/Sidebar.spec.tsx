@@ -203,6 +203,7 @@ describe('Sidebar — conteúdo por perfil (a estrutura é a mesma)', () => {
       'Respostas rápidas',
       'Atendentes',
       'Convênios',
+      'Finalidades de visita',
       'Minha Conta',
       'Conversão',
     ]) {
@@ -240,7 +241,7 @@ describe('Sidebar — item ativo', () => {
 });
 
 describe('Sidebar — Cadastros acende em qualquer aba (CRMLAB-143)', () => {
-  it.each(['/catalog', '/quick-replies', '/settings/users', '/settings/attendants', '/settings/insurances'])(
+  it.each(['/catalog', '/quick-replies', '/settings/users', '/settings/attendants', '/settings/insurances', '/settings/visit-purposes'])(
     'em %s o grupo Configurações abre sozinho e "Cadastros" fica ativo',
     (path) => {
       login('admin');

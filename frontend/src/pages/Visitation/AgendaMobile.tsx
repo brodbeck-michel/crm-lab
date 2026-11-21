@@ -1,7 +1,7 @@
 import { VISIT_STATUS_LABELS, VISIT_TYPE_LABELS, type Visit } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
 import { formatDayLabel, formatTime, formatWeekday, sameDay, weekMonths } from './agenda-dates';
-import { PersonAvatar, STATUS_STYLES, StatusDot, isStruck, visitPlace } from './agenda-ui';
+import { PURPOSE_STYLES, PersonAvatar, StatusIcon, isStruck, visitPlace } from './agenda-ui';
 
 interface AgendaMobileProps {
   weekStart: Date;
@@ -22,7 +22,8 @@ interface AgendaMobileProps {
 /**
  * Celular (< 768px, CRMLAB-92, D-262): foco no DIA. Faixa da semana com
  * ponto nos dias que têm visita, título do dia e a lista daquele dia. Tocar
- * abre a visita completa (modal em tela cheia).
+ * abre a visita completa (modal em tela cheia). Cartão na cor da finalidade,
+ * status por ícone + rótulo (CRMLAB-190, D-330).
  */
 export function AgendaMobile(props: AgendaMobileProps) {
   const { weekStart, days, now, selectedDay, visits, activeFilters } = props;
@@ -157,15 +158,21 @@ export function AgendaMobile(props: AgendaMobileProps) {
               <button
                 type="button"
                 onClick={() => props.onOpen(visit)}
-                aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]}`}
+                aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]} · ${visit.purpose.name}`}
+                data-testid="visit-card"
+                data-purpose-color={visit.purpose.color}
                 className={cn(
                   'flex min-w-0 flex-1 flex-col gap-[3px] rounded-lg px-[14px] py-md text-left',
-                  STATUS_STYLES[visit.status].bg,
-                  STATUS_STYLES[visit.status].ink,
+                  PURPOSE_STYLES[visit.purpose.color].bg,
+                  PURPOSE_STYLES[visit.purpose.color].ink,
+                  isStruck(visit.status) && 'opacity-60',
                 )}
               >
-                <span className="flex items-center gap-[6px] text-[11px] font-bold uppercase tracking-[0.06em]">
-                  <StatusDot status={visit.status} />
+                <span
+                  aria-hidden="true"
+                  className="flex items-center gap-[6px] text-[11px] font-bold uppercase tracking-[0.06em]"
+                >
+                  <StatusIcon status={visit.status} size={12} />
                   {VISIT_STATUS_LABELS[visit.status]}
                 </span>
                 <span
@@ -176,6 +183,7 @@ export function AgendaMobile(props: AgendaMobileProps) {
                 >
                   {visit.doctor.name}
                 </span>
+                <span className="truncate text-body font-semibold">{visit.purpose.name}</span>
                 <span className="truncate text-body">
                   {[visit.doctor.specialty, visitPlace(visit, VISIT_TYPE_LABELS[visit.type])]
                     .filter(Boolean)

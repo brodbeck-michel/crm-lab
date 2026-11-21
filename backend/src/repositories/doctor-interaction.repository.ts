@@ -14,6 +14,7 @@ import type {
   DoctorTimelineItem,
   DoctorTimelineVisit,
   VisitPerson,
+  VisitPurposeColor,
   VisitStatus,
   VisitType,
 } from '@crm-lab/shared';
@@ -52,6 +53,9 @@ interface TimelineRow {
   // visita
   status: VisitStatus | null;
   visit_type: VisitType | null;
+  purpose_id: string | null;
+  purpose_name: string | null;
+  purpose_color: VisitPurposeColor | null;
   scheduled_at: Date | string | null;
   check_in_at: Date | string | null;
   check_out_at: Date | string | null;
@@ -123,6 +127,11 @@ function toTimelineEntry(row: TimelineRow): TimelineEntry {
       occurredAt,
       status: row.status as VisitStatus,
       type: row.visit_type as VisitType,
+      purpose: {
+        id: row.purpose_id ?? '',
+        name: row.purpose_name ?? '',
+        color: row.purpose_color ?? 'cinza',
+      },
       scheduledAt: isoDateTime(row.scheduled_at as Date | string),
       checkInAt: isoOrNull(row.check_in_at),
       checkOutAt: isoOrNull(row.check_out_at),
@@ -210,7 +219,9 @@ export class DoctorInteractionRepository {
     const sql = `
       SELECT * FROM (
         SELECT 'visit' AS kind, v.id, ${VISIT_SORT_AT} AS sort_at,
-          v.status, v.type AS visit_type, v.scheduled_at, v.check_in_at, v.check_out_at,
+          v.status, v.type AS visit_type,
+          v.purpose_id, vp.name AS purpose_name, vp.color AS purpose_color,
+          v.scheduled_at, v.check_in_at, v.check_out_at,
           v.responsible_user_id, ru.name AS responsible_name, v.status_reason,
           v.report_presented, v.report_feedback, v.report_objections,
           (SELECT COUNT(*)::int FROM doctor_visit_attachments a WHERE a.visit_id = v.id) AS attachment_count,
@@ -219,11 +230,14 @@ export class DoctorInteractionRepository {
           NULL::uuid AS updated_by, NULL::varchar AS updated_by_name,
           NULL::timestamptz AS created_at, NULL::timestamptz AS updated_at
         FROM doctor_visits v
+        JOIN visit_purposes vp ON vp.id = v.purpose_id
         LEFT JOIN users ru ON ru.id = v.responsible_user_id
         WHERE v.doctor_id = $1
         UNION ALL
         SELECT 'interaction' AS kind, i.id, ${INTERACTION_SORT_AT} AS sort_at,
-          NULL::varchar, NULL::varchar, NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
+          NULL::varchar, NULL::varchar,
+          NULL::uuid, NULL::varchar, NULL::varchar,
+          NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
           NULL::uuid, NULL::varchar, NULL::varchar,
           NULL::text, NULL::text, NULL::text,
           NULL::int,

@@ -2136,6 +2136,58 @@ CREATE INDEX idx_doctor_visit_attachments_uploaded_by ON doctor_visit_attachment
 - Migração **única** (colunas + tabela + policy), sem backfill: as visitas que já existem ficam
   com tudo `NULL` e nenhuma é `realizada` (a 048 não tinha rota que gravasse esse status).
 
+### 36a. `visit_purposes` e `doctor_visits.purpose_id` (migração 073 — CRMLAB-190, D-330)
+Finalidade da visita (para quê), cadastrada por laboratório, com cor de uma paleta fixa. Fica
+ao lado do `type` (modo: como), que continua.
+
+```sql
+CREATE TABLE visit_purposes (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name        VARCHAR(60) NOT NULL CHECK (length(trim(name)) > 0),
+  color       VARCHAR(20) NOT NULL,              -- CHAVE da paleta, nunca hex
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(), -- trigger trg_visit_purposes_updated_at
+  CHECK (color IN ('azul','verde','agua','violeta','ambar','rosa','terracota','cinza'))
+);
+CREATE UNIQUE INDEX uq_visit_purposes_tenant_name ON visit_purposes(tenant_id, lower(name));
+CREATE INDEX idx_visit_purposes_tenant_order ON visit_purposes(tenant_id, sort_order);
+CREATE INDEX idx_visit_purposes_created_by ON visit_purposes(created_by);
+-- ENABLE ROW LEVEL SECURITY + policy visit_purposes_tenant_isolation (mesmo arquivo)
+
+-- Semente: as 5 finalidades padrão de um laboratório (idempotente).
+CREATE FUNCTION seed_visit_purposes(p_tenant_id UUID) RETURNS void ...;
+CREATE FUNCTION trg_seed_visit_purposes() RETURNS trigger ...;   -- chama a de cima com NEW.id
+CREATE TRIGGER trg_tenants_seed_visit_purposes AFTER INSERT ON tenants
+  FOR EACH ROW EXECUTE FUNCTION trg_seed_visit_purposes();
+
+ALTER TABLE doctor_visits ADD COLUMN purpose_id UUID REFERENCES visit_purposes(id);
+-- backfill: toda visita existente recebe a "Visita" do próprio tenant
+ALTER TABLE doctor_visits ALTER COLUMN purpose_id SET NOT NULL;
+CREATE INDEX idx_doctor_visits_purpose_id ON doctor_visits(purpose_id);
+```
+
+| Ordem | Nome | Cor |
+|---|---|---|
+| 1 | Visita | `azul` |
+| 2 | Solicitação de patrocínio | `verde` |
+| 3 | Solicitação de material | `agua` |
+| 4 | Acesso a exames | `violeta` |
+| 5 | Compromisso interno | `cinza` |
+
+- **Semente em todo tenant:** a migração chama `seed_visit_purposes` para cada tenant existente;
+  os novos recebem pelo trigger em `tenants` (onboarding do console, seeds, factories de teste).
+  `ON CONFLICT (tenant_id, lower(name)) DO NOTHING`: rodar de novo não duplica.
+- **Nome único no laboratório** sem diferenciar maiúscula (`lower(name)`); outro tenant pode repetir.
+- **Sem DELETE:** inativar (`is_active = FALSE`). A visita referencia a finalidade
+  (`purpose_id` sem `ON DELETE`, NO ACTION), como o médico (§36).
+- **`purpose_id` é do mesmo tenant da visita**: o service confere (ativa ao criar/trocar).
+- **Backfill:** `purpose_id` = a "Visita" do próprio tenant, depois `SET NOT NULL`. Idempotente
+  (`WHERE purpose_id IS NULL`, `ADD COLUMN IF NOT EXISTS`).
+
 ### 38. `doctor_interactions` (migração 052 — CRMLAB-89, D-261)
 Registros de interação lançados à mão na ficha do médico (ligação, e-mail, WhatsApp). A linha do
 tempo do médico junta esta tabela com `doctor_visits` **na leitura** (`UNION ALL`); nada é copiado.
@@ -2752,6 +2804,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `capture_devices` | ✅ | migração `069_scans.sql` (tabela + policy no mesmo arquivo — CRMLAB-184), `tests/db/rls-scans.spec.ts` |
 | `scans` | ✅ | idem |
 | `doctor_specialties` | ✅ | migração `070_doctor_profile_expanded.sql` (tabela + policy no mesmo arquivo — CRMLAB-188), `tests/doctors/doctor-specialties.spec.ts` |
+| `visit_purposes` | ✅ | migração `073_visit_purposes.sql` (tabela + policy no mesmo arquivo — CRMLAB-190), `tests/db/migration-073-visit-purposes.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**

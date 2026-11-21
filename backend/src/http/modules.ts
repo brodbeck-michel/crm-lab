@@ -49,6 +49,7 @@ import { funnelRulesModule } from '../controllers/funnel-rules.routes.js';
 import { businessCalendarModule, holidayModule } from '../controllers/holiday.routes.js';
 import { doctorModule } from '../controllers/doctor.routes.js';
 import { visitModule } from '../controllers/visit.routes.js';
+import { visitPurposeModule } from '../controllers/visit-purpose.routes.js';
 import { whatsappTemplateModule } from '../controllers/whatsapp-template.routes.js';
 import { captureDeviceModule } from '../controllers/capture-device.routes.js';
 import { captureModule } from '../controllers/capture.routes.js';
@@ -85,6 +86,7 @@ export const apiModuleFactories: ApiModuleFactory[] = [
   businessCalendarModule, // GET /settings/business-calendar — API_CONTRACTS.md §6e (CRMLAB-84)
   doctorModule, // GET|POST /doctors, GET|PATCH /doctors/:id, POST /doctors/:id/inactivate|reactivate — API_CONTRACTS.md §13 (CRMLAB-86)
   visitModule, // GET|POST /visits, GET|PATCH /visits/:id, POST /visits/:id/reschedule|cancel|not-received — API_CONTRACTS.md §14 (CRMLAB-87)
+  visitPurposeModule, // GET|POST /settings/visit-purposes, PATCH /settings/visit-purposes/:id — API_CONTRACTS.md §14 (CRMLAB-190)
   whatsappTemplateModule, // GET /whatsapp/templates — API_CONTRACTS.md §6.2 (CRMLAB-136)
   captureDeviceModule, // GET|POST /settings/capture-devices, POST /:id/pairing-code, DELETE /:id — API_CONTRACTS.md §15.1 (CRMLAB-184)
   captureModule, // POST /capture/pair|scans, GET /capture/session — PUBLICO, cookie do dispositivo — API_CONTRACTS.md §15.2 (CRMLAB-184)

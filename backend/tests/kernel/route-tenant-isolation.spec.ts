@@ -47,6 +47,7 @@ import { conversationModule } from '../../src/controllers/conversation.routes.js
 import { doctorModule } from '../../src/controllers/doctor.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { visitModule } from '../../src/controllers/visit.routes.js';
+import { visitPurposeModule } from '../../src/controllers/visit-purpose.routes.js';
 import { funnelRulesModule } from '../../src/controllers/funnel-rules.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
@@ -65,6 +66,7 @@ import {
   createProposal,
   createTenant,
   createUser,
+  visitPurposeId,
   type ConversationRecord,
   type ExamRecord,
   type ProposalRecord,
@@ -135,6 +137,7 @@ const LAB_MODULES = [
   whatsappTemplateModule, // CRMLAB-136
   doctorModule,
   visitModule,
+  visitPurposeModule, // CRMLAB-190
   examModule,
   funnelRulesModule,
   insuranceModule,
@@ -191,6 +194,8 @@ interface Lab {
   doctor: { id: string };
   /** Visita agendada ao medico (CRMLAB-87, D-256). */
   visit: { id: string };
+  /** Finalidade "Visita" do laboratorio (semente da 073 — CRMLAB-190, D-330). */
+  visitPurpose: { id: string };
   /** Visita com check-in feito — alvo legitimo do check-out (CRMLAB-88, D-258). */
   checkedInVisit: { id: string };
   /** Anexo (PDF) de `visit`, com o arquivo no disco (CRMLAB-88). */
@@ -736,6 +741,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
       responsibleId: l.attendant.id,
       scheduledAt: '2026-10-06T13:00:00.000Z',
       type: 'presencial',
+      purposeId: l.visitPurpose.id,
     }),
     actor: 'attendant',
     addressable: false,
@@ -781,6 +787,32 @@ const LAB_ROUTES: readonly LabRoute[] = [
     path: (l) => `/api/v1/visits/${l.visit.id}/not-received`,
     body: () => ({ reason: 'Sonda' }),
     actor: 'attendant',
+    addressable: true,
+    ownStatus: 200,
+  },
+
+  // --- finalidades da visita (CRMLAB-190, D-330): todos leem, gestor+ escreve ---
+  {
+    name: 'GET /settings/visit-purposes',
+    method: 'get',
+    path: () => '/api/v1/settings/visit-purposes',
+    actor: 'attendant',
+    addressable: false,
+  },
+  {
+    name: 'POST /settings/visit-purposes',
+    method: 'post',
+    path: () => '/api/v1/settings/visit-purposes',
+    body: () => ({ name: `Sonda ${Math.random().toString(36).slice(2, 8)}`, color: 'rosa' }),
+    actor: 'manager',
+    addressable: false,
+  },
+  {
+    name: 'PATCH /settings/visit-purposes/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/settings/visit-purposes/${l.visitPurpose.id}`,
+    body: () => ({ sortOrder: 7 }),
+    actor: 'manager',
     addressable: true,
     ownStatus: 200,
   },
@@ -1377,17 +1409,20 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
 
   const visitRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
-      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, agenda)
-       VALUES ($1, $2, $3, '2026-10-06T13:00:00Z', 'presencial', $4) RETURNING id`,
+      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, agenda, purpose_id)
+       VALUES ($1, $2, $3, '2026-10-06T13:00:00Z', 'presencial', $4,
+               (SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = 'Visita')) RETURNING id`,
       [tenant.id, doctor.id, attendant.id, secret ? BETA_SECRETS.visit : `Pauta ${prefix}`],
     ),
   );
   const visit = { id: visitRow.rows[0]?.id as string };
+  const visitPurpose = { id: await visitPurposeId(tenant.id, 'Visita', db) };
 
   const checkedInRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
-      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, check_in_at, check_in_by)
-       VALUES ($1, $2, $3, '2026-10-06T15:00:00Z', 'presencial', now(), $3) RETURNING id`,
+      `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, check_in_at, check_in_by, purpose_id)
+       VALUES ($1, $2, $3, '2026-10-06T15:00:00Z', 'presencial', now(), $3,
+               (SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = 'Visita')) RETURNING id`,
       [tenant.id, doctor.id, attendant.id],
     ),
   );
@@ -1485,6 +1520,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     quickReply,
     doctor,
     visit,
+    visitPurpose,
     checkedInVisit,
     visitAttachment,
     doctorInteraction,
@@ -1576,7 +1612,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 132 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 139 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1630,7 +1666,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-186/D-326 soma 1: `POST /users/:id/reset-password`.
     // CRMLAB-188/D-328 soma 4: `GET|POST /doctors/specialties`,
     // `PATCH /doctors/specialties/:id` e `POST /doctors/abc/recalculate`.
-    expect(LAB_ROUTES).toHaveLength(136);
+    // CRMLAB-190/D-330 soma 3: `GET|POST /settings/visit-purposes` e
+    // `PATCH /settings/visit-purposes/:id`.
+    expect(LAB_ROUTES).toHaveLength(139);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

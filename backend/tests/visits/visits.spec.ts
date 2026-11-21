@@ -11,7 +11,13 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ApiErrorBody, ListVisitsResponse, VisitDetail } from '@crm-lab/shared';
 import { visitModule } from '../../src/controllers/visit.routes.js';
 import type { DbClient } from '../../src/db/types.js';
-import { createTenant, createUser, type TenantRecord, type UserRecord } from '../helpers/factories.js';
+import {
+  createTenant,
+  createUser,
+  visitPurposeId,
+  type TenantRecord,
+  type UserRecord,
+} from '../helpers/factories.js';
 import { createTestApp, type TestApp } from '../helpers/test-app.js';
 import { getTestDb, resetDatabase } from '../helpers/test-db.js';
 
@@ -30,6 +36,10 @@ let attendantB: UserRecord;
 let doctorA: string;
 let doctorA2: string;
 let doctorB: string;
+/** Finalidades semeadas pela 073 (CRMLAB-190): "Visita" e "Compromisso interno" do A, "Visita" do B. */
+let purposeA: string;
+let purposeA2: string;
+let purposeB: string;
 
 beforeAll(async () => {
   db = await getTestDb();
@@ -57,6 +67,9 @@ beforeEach(async () => {
   doctorA = await insertDoctor(tenantA.id, 'Dra. Júlia Costa');
   doctorA2 = await insertDoctor(tenantA.id, 'Dr. Paulo Lima');
   doctorB = await insertDoctor(tenantB.id, 'Dr. Confidencial Beta');
+  purposeA = await visitPurposeId(tenantA.id, 'Visita', db);
+  purposeA2 = await visitPurposeId(tenantA.id, 'Compromisso interno', db);
+  purposeB = await visitPurposeId(tenantB.id, 'Visita', db);
 });
 
 function visitBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -65,6 +78,7 @@ function visitBody(overrides: Record<string, unknown> = {}): Record<string, unkn
     responsibleId: attendantA.id,
     scheduledAt: '2026-10-06T13:00:00.000Z',
     type: 'presencial',
+    purposeId: purposeA,
     agenda: 'Apresentar o painel de check-up',
     ...overrides,
   };
@@ -156,6 +170,7 @@ describe('POST /visits', () => {
       responsible: { id: attendantA.id, name: 'Atendente Bia' },
       scheduledAt: '2026-10-06T13:00:00.000Z',
       type: 'presencial',
+      purpose: { id: purposeA, name: 'Visita', color: 'azul' },
       agenda: 'Apresentar o painel',
       status: 'agendada',
       statusReason: null,
@@ -184,7 +199,7 @@ describe('POST /visits', () => {
 
   it('campos obrigatórios, tipo fora da lista e campo desconhecido -> 400', async () => {
     const h = app.auth(attendantA);
-    for (const field of ['doctorId', 'responsibleId', 'scheduledAt', 'type']) {
+    for (const field of ['doctorId', 'responsibleId', 'scheduledAt', 'type', 'purposeId']) {
       const body = visitBody();
       delete body[field];
       await app.agent.post(BASE).set(h).send(body).expect(400);
@@ -408,7 +423,7 @@ describe('isolamento multitenant', () => {
     const response = await app.agent
       .post(BASE)
       .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }));
+      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id, purposeId: purposeB }));
     expect(response.status).toBe(201);
     const visitB = response.body as VisitDetail;
 
@@ -432,10 +447,15 @@ describe('isolamento multitenant', () => {
     await app.agent
       .post(BASE)
       .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }))
+      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id, purposeId: purposeB }))
       .expect(201);
     await createOk(attendantA);
-    const queries: Array<Record<string, string>> = [{}, { doctorId: doctorB }, { responsibleId: attendantB.id }];
+    const queries: Array<Record<string, string>> = [
+      {},
+      { doctorId: doctorB },
+      { responsibleId: attendantB.id },
+      { purposeId: purposeB },
+    ];
     for (const query of queries) {
       const res = await list(attendantA, query);
       expect(JSON.stringify(res.body)).not.toContain('Dr. Confidencial Beta');
@@ -455,7 +475,7 @@ describe('isolamento multitenant', () => {
     const res = await app.agent
       .post(BASE)
       .set(app.auth(attendantB))
-      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id }));
+      .send(visitBody({ doctorId: doctorB, responsibleId: attendantB.id, purposeId: purposeB }));
     const visitB = res.body as VisitDetail;
     await app.agent
       .post(`${BASE}/${visitB.id}/reschedule`)
@@ -500,7 +520,12 @@ describe('audit log', () => {
       expect(log.tenant_id).toBe(tenantA.id);
       expect(log.user_id).toBe(attendantA.id);
     }
-    expect(logs[0]?.new_values).toMatchObject({ doctorId: doctorA, responsibleId: attendantA.id, status: 'agendada' });
+    expect(logs[0]?.new_values).toMatchObject({
+      doctorId: doctorA,
+      responsibleId: attendantA.id,
+      purposeId: purposeA,
+      status: 'agendada',
+    });
     expect(logs[1]?.old_values).toEqual({ type: 'presencial' });
     expect(logs[1]?.new_values).toEqual({ type: 'online' });
     expect(logs[2]?.old_values).toEqual({ scheduledAt: '2026-10-06T13:00:00.000Z' });
@@ -508,5 +533,81 @@ describe('audit log', () => {
     expect(logs[3]?.new_values).toEqual({ status: 'cancelada', reason: 'Viagem' });
 
     expect((await auditOf(other.id)).map((l) => l.action)).toEqual(['create_visit', 'visit_not_received']);
+  });
+});
+
+describe('finalidade da visita (CRMLAB-190, D-330)', () => {
+  async function setPurposeActive(id: string, isActive: boolean): Promise<void> {
+    await db.withoutTenant((tx) => tx.query('UPDATE visit_purposes SET is_active = $1 WHERE id = $2', [isActive, id]));
+  }
+
+  it('finalidade inativa, de outro laboratório ou inexistente -> 400 em purposeId', async () => {
+    await setPurposeActive(purposeA2, false);
+    for (const purposeId of [purposeA2, purposeB, UNKNOWN_ID]) {
+      const res = await app.agent.post(BASE).set(app.auth(attendantA)).send(visitBody({ purposeId }));
+      expect(res.status).toBe(400);
+      expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+      expect(errorOf(res).details).toMatchObject({ fields: { purposeId: expect.any(String) } });
+    }
+  });
+
+  it('PATCH troca a finalidade enquanto agendada; para inativa -> 400', async () => {
+    const visit = await createOk(attendantA);
+    const h = app.auth(attendantA);
+    const res = await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ purposeId: purposeA2 });
+    expect(res.status).toBe(200);
+    expect((res.body as VisitDetail).purpose).toEqual({ id: purposeA2, name: 'Compromisso interno', color: 'cinza' });
+
+    await setPurposeActive(purposeA, false);
+    const back = await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ purposeId: purposeA });
+    expect(back.status).toBe(400);
+    expect(errorOf(back).details).toMatchObject({ fields: { purposeId: expect.any(String) } });
+
+    const logs = await auditOf(visit.id);
+    expect(logs.map((l) => l.action)).toEqual(['create_visit', 'update_visit']);
+    expect(logs[1]?.old_values).toEqual({ purposeId: purposeA });
+    expect(logs[1]?.new_values).toEqual({ purposeId: purposeA2 });
+  });
+
+  it('visita com finalidade inativada continua exibida e editável sem trocá-la', async () => {
+    const visit = await createOk(attendantA);
+    await setPurposeActive(purposeA, false);
+    const h = app.auth(attendantA);
+
+    const got = await app.agent.get(`${BASE}/${visit.id}`).set(h).expect(200);
+    expect((got.body as VisitDetail).purpose).toEqual({ id: purposeA, name: 'Visita', color: 'azul' });
+
+    // Mandar a mesma finalidade (inativa) junto não é "trocar": passa.
+    const res = await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ agenda: 'Nova pauta', purposeId: purposeA });
+    expect(res.status).toBe(200);
+    expect((res.body as VisitDetail).agenda).toBe('Nova pauta');
+  });
+
+  it('visita encerrada não troca a finalidade (409)', async () => {
+    const visit = await createOk(attendantA);
+    const h = app.auth(attendantA);
+    await app.agent.post(`${BASE}/${visit.id}/cancel`).set(h).send({ reason: 'Viagem' }).expect(200);
+    const res = await app.agent.patch(`${BASE}/${visit.id}`).set(h).send({ purposeId: purposeA2 });
+    expect(res.status).toBe(409);
+    expect(errorOf(res).code).toBe('VISIT_ALREADY_CLOSED');
+  });
+
+  it('GET /visits devolve a finalidade e filtra por purposeId', async () => {
+    await createOk(attendantA);
+    await createOk(attendantA, { purposeId: purposeA2, scheduledAt: '2026-10-07T13:00:00.000Z' });
+
+    const all = await list(attendantA);
+    expect(all.status).toBe(200);
+    const visits = (all.body as ListVisitsResponse).visits;
+    expect(visits.map((v) => v.purpose.name)).toEqual(['Visita', 'Compromisso interno']);
+
+    const filtered = await list(attendantA, { purposeId: purposeA2 });
+    expect((filtered.body as ListVisitsResponse).visits.map((v) => v.purpose.id)).toEqual([purposeA2]);
+
+    // Finalidade de outro laboratório no filtro não vaza nada.
+    const cross = await list(attendantA, { purposeId: purposeB });
+    expect((cross.body as ListVisitsResponse).visits).toEqual([]);
+
+    expect((await list(attendantA, { purposeId: 'nao-e-uuid' })).status).toBe(400);
   });
 });

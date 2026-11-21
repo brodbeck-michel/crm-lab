@@ -33,6 +33,8 @@ export interface ReturnVisitPrefill {
   doctor: { id: string; name: string; isActive: boolean };
   responsibleId: string | null;
   type: VisitType;
+  /** Finalidade da anterior (CRMLAB-190) — o formulário só usa se ainda estiver ativa. */
+  purposeId: string;
   /** Data de retorno às 09:00, no fuso do navegador. */
   at: Date;
 }
@@ -287,6 +289,7 @@ export function returnPrefill(visit: Visit, isoDate: string): ReturnVisitPrefill
     doctor: { id: visit.doctor.id, name: visit.doctor.name, isActive: visit.doctor.isActive },
     responsibleId: visit.responsible?.id ?? null,
     type: visit.type,
+    purposeId: visit.purpose.id,
     at: new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1, 9, 0),
   };
 }

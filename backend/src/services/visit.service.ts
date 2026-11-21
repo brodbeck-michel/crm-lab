@@ -64,6 +64,7 @@ import {
   type VisitPatch,
   type VisitReportPatch,
 } from '../repositories/visit.repository.js';
+import { VisitPurposeRepository } from '../repositories/visit-purpose.repository.js';
 import type { AuditService } from './audit.service.js';
 import { resolveStoredMimeType } from './media.service.js';
 
@@ -139,6 +140,7 @@ function auditView(visit: VisitDetail): Record<string, unknown> {
     responsibleId: visit.responsible?.id ?? null,
     scheduledAt: visit.scheduledAt,
     type: visit.type,
+    purposeId: visit.purpose.id,
     agenda: visit.agenda,
     status: visit.status,
   };
@@ -151,7 +153,16 @@ const CLOSE_ACTIONS: Record<VisitClosingStatus, string> = {
 
 export function createVisitService(deps: VisitServiceDeps): VisitService {
   const repository = new VisitRepository(deps.db);
+  const purposes = new VisitPurposeRepository(deps.db);
   const audit = deps.audit;
+
+  /** Finalidade ATIVA do mesmo laboratorio (CRMLAB-190, D-330). */
+  async function assertPurpose(ctx: TenantContext, purposeId: string): Promise<void> {
+    const purpose = await purposes.findById(ctx.tenantId, purposeId);
+    if (!purpose || !purpose.isActive) {
+      throw invalid({ purposeId: 'Finalidade inexistente ou inativa neste laboratório' });
+    }
+  }
 
   async function assertDoctor(ctx: TenantContext, doctorId: string): Promise<void> {
     const doctor = await repository.findTenantDoctor(ctx.tenantId, doctorId);
@@ -201,6 +212,7 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
         doctorId: query.doctorId,
         responsibleId: query.responsibleId,
         status: query.status,
+        purposeId: query.purposeId,
         limit: VISIT_LIST_MAX_RESULTS + 1,
       });
       const truncated = rows.length > VISIT_LIST_MAX_RESULTS;
@@ -216,12 +228,14 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
       const scheduledAt = parseDate(dto.scheduledAt, 'scheduledAt');
       await assertDoctor(ctx, dto.doctorId);
       await assertResponsible(ctx, dto.responsibleId);
+      await assertPurpose(ctx, dto.purposeId);
 
       const created = await repository.insert(ctx.tenantId, ctx.userId, {
         doctorId: dto.doctorId,
         responsibleId: dto.responsibleId,
         scheduledAt,
         type: dto.type,
+        purposeId: dto.purposeId,
         agenda: cleanText(dto.agenda) ?? null,
       });
 
@@ -253,6 +267,11 @@ export function createVisitService(deps: VisitServiceDeps): VisitService {
         patch.responsibleId = dto.responsibleId;
       }
       if (dto.type !== undefined && dto.type !== current.type) patch.type = dto.type;
+      // Finalidade inativada depois nao trava a visita: so revalida quando MUDA.
+      if (dto.purposeId !== undefined && dto.purposeId !== current.purpose.id) {
+        await assertPurpose(ctx, dto.purposeId);
+        patch.purposeId = dto.purposeId;
+      }
       const agenda = cleanText(dto.agenda);
       if (agenda !== undefined && agenda !== current.agenda) patch.agenda = agenda;
 

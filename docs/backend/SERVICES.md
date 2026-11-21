@@ -1902,6 +1902,30 @@ Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o 
 `LEFT JOIN` do nome — leitura de apoio, sem escrever em tabela de outro domínio, mesmo padrão de
 `ProposalRepository.findTenantUser`.
 
+**CRMLAB-188 (D-328) — cadastro ampliado e curva ABC.** O `DoctorService` valida os campos novos
+(aniversário, consultas, valor, horário, parceria, CEP/UF, especialidade ativa) sobre o estado
+**depois** do merge com o gravado e faz a escrita dupla nas colunas antigas (`specialty` ← nome da
+especialidade, `contact_name` ← `secretaryName`). Dois services novos, no mesmo módulo `/doctors`:
+
+```typescript
+// backend/src/services/doctor-specialty.service.ts — dono de `doctor_specialties`
+export interface DoctorSpecialtyService {
+  list(ctx, query: ListDoctorSpecialtiesQuery): Promise<ListDoctorSpecialtiesResponse>; // semeia tenant vazio
+  create(ctx, dto: CreateDoctorSpecialtyRequest): Promise<DoctorSpecialty>;              // DOCTOR_SPECIALTY_ALREADY_EXISTS
+  update(ctx, id: string, dto: UpdateDoctorSpecialtyRequest): Promise<DoctorSpecialty>;  // NOT_FOUND, 409
+}
+
+// backend/src/services/doctor-abc.service.ts — escreve só doctors.abc_*
+export interface DoctorAbcService {
+  recalculateTenant(tenantId: string, now?: Date): Promise<DoctorAbcRecalculation>;
+  recalculate(ctx: TenantContext): Promise<DoctorAbcRecalculation>;   // rota; audit recalculate_doctor_abc
+  runScheduledTick(): Promise<void>;                                  // main.ts, 24 h; nunca lança
+}
+```
+
+O `ProposalService` lê `doctors` (id, nome, ativo — do próprio tenant) para validar `doctorId`;
+leitura de apoio, como o responsável acima.
+
 ---
 
 ## 31. VisitService — agenda de visitas (CRMLAB-87 — D-256)

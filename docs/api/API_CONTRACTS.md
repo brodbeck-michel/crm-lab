@@ -2667,6 +2667,10 @@ texto na proposta. **Editável via `PATCH /proposals/:id/items`** (CRMLAB-12, D-
 proposta estiver em `novo_contato`/`orcamento_enviado` — `insuranceId` continua imutável (D-082,
 sem `PATCH` que o altere).
 
+**`doctorId` / `doctorName` (CRMLAB-188, D-328):** o `ProposalDetail` traz o médico do cadastro
+vinculado (`doctorId`, e `doctorName` por JOIN), `null` sem vínculo. É a base da curva ABC (§13).
+Opcionais no tipo, sempre presentes na resposta. `requestingDoctor` continua sendo o texto exibido.
+
 **Campos do LIS (CRMLAB-52, D-118/D-119):** `lisBudgetNumber` e `lisReconciledAt` saem na
 listagem e no detalhe (o selo "Conciliado" aparece nos dois). `lisRequisitionNumber`,
 `lisPaidValue` e `lisPaidOn` (`YYYY-MM-DD`, D-110) saem só no detalhe. Todos são `null` até
@@ -2711,6 +2715,11 @@ Criar nova proposta.
 informado. Texto livre, máximo 255 caracteres, aparado (`trim`) pelo backend — string vazia
 após o `trim` vira `NULL`, não é gravada como `""`. Sem validação de existência (não há
 cadastro de médicos).
+
+`doctorId` (CRMLAB-188, D-328) é opcional: uuid de um médico **ativo** do mesmo laboratório
+(`GET /doctors?search=&active=true`). Inexistente, inativo ou de outro tenant →
+`VALIDATION_ERROR` com `details.fields.doctorId` (sem dizer qual dos três). Com `doctorId` e
+`requestingDoctor` vazio/ausente, o backend grava o nome do médico em `requestingDoctor`.
 
 `insuranceId` (Onda 7) é opcional: `null`/ausente = particular (D-082). Quando presente, o
 preço de cada item é resolvido por convênio (`ExamCatalogService.resolveActiveByIds(...,
@@ -3070,6 +3079,10 @@ Substitui a lista de itens e, opcionalmente, desconto e médico solicitante (CRM
   catálogo no momento da chamada (mesmo convênio já gravado na proposta), nunca recebidos do
   cliente — novo snapshot (D-004), o anterior é descartado.
 - `discountPercent` e `requestingDoctor` são opcionais: omitidos, mantêm o valor atual.
+- `doctorId` (CRMLAB-188, D-328) idem: omitido mantém, `null` desvincula; **trocar** exige médico
+  ativo do laboratório (mesma regra e erro do `POST`). Manter o médico atual vale mesmo se ele foi
+  inativado depois. Sem texto, `requestingDoctor` recebe o nome do médico. Audit
+  `update_proposal_items` leva `doctorId` em `oldValues`/`newValues`.
 - **`insuranceId` não entra neste corpo** — continua imutável após a criação (D-082).
 - **Só aceito com a proposta em `novo_contato` ou `orcamento_enviado`** (`EDITABLE_STATUSES` de
   `@crm-lab/shared`) — fora disso, `PROPOSAL_EDIT_NOT_ALLOWED` (409). Proposta terminal
@@ -6327,6 +6340,90 @@ grava segundo audit.
 
 **Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400, `:id` não-uuid), `FORBIDDEN` (403,
 `platform_operator`)
+
+### Cadastro ampliado (CRMLAB-188, D-328)
+
+Colunas em SCHEMA.md §51; regras em BUSINESS_RULES §12b. **O `Doctor` ganha** (sempre presentes na
+resposta):
+
+```json
+{
+  "specialtyId": "0d0f…", "specialty": "Ginecologia e Obstetrícia",
+  "birthDay": 14, "birthMonth": 3, "birthYear": null,
+  "acceptsPrivate": true, "monthlyConsultations": 320, "monthlyPrivateConsultations": 120,
+  "consultationFee": 350.00,
+  "visitHours": [{ "weekdays": [2, 4], "start": "13:30", "end": "15:00" }],
+  "visitPreference": "Evitar segunda",
+  "isPartner": true, "partnerSince": "2025-03-01", "partnershipNotes": "Indica check-up anual",
+  "addressZip": "88701100", "addressStreet": "Rua Lauro Müller", "addressNumber": "100",
+  "addressComplement": "Sala 3", "addressDistrict": "Centro", "addressCity": "Tubarão", "addressState": "SC",
+  "address": null,
+  "secretaryName": "Marta", "secretaryBirthDay": 2, "secretaryBirthMonth": 9, "secretaryBirthYear": 1990,
+  "secretaryPhone": "(48) 98888-0000", "secretaryNotes": "Prefere WhatsApp",
+  "contactName": "Marta",
+  "abcClass": "A", "abcBaseValue": 18450.30, "abcCalculatedAt": "2026-11-21T06:00:00.000Z"
+}
+```
+
+- `specialty` passa a ser **só leitura**: o nome da especialidade da lista; sem `specialtyId`, o texto
+  antigo. `contactName` é **deprecado**, só leitura, espelho de `secretaryName`. `address` (texto
+  antigo) continua aceito e devolvido. `visitPreference` é a "observação de horário".
+- `visitHours`: `weekdays` 0 = domingo … 6 = sábado, sem repetição, ordenados; `start`/`end` `HH:MM`.
+- `abc*` nunca entram no corpo (calculados; `.strict()` recusa).
+
+**Corpo de `POST /doctors` / `PATCH /doctors/:id`** — além dos campos de antes, **menos
+`specialty` e `contactName`** (agora → `VALIDATION_ERROR`, schema estrito):
+`specialtyId`, `birthDay`, `birthMonth`, `birthYear`, `acceptsPrivate`, `monthlyConsultations`,
+`monthlyPrivateConsultations`, `consultationFee`, `visitHours` (substitui a lista; `null`/`[]` limpa),
+`isPartner`, `partnerSince`, `partnershipNotes`, `addressZip`, `addressStreet`, `addressNumber`,
+`addressComplement`, `addressDistrict`, `addressCity`, `addressState`, `secretaryName`,
+`secretaryBirthDay`, `secretaryBirthMonth`, `secretaryBirthYear`, `secretaryPhone`, `secretaryNotes`.
+Validação (`VALIDATION_ERROR` com `details.fields.<campo>`; no PATCH vale o estado **depois** de
+juntar com o gravado):
+- `specialtyId`: especialidade **ativa** do laboratório (manter a atual inativa é permitido).
+- Aniversário: dia e mês juntos, data possível (29/02 sem ano vale); ano ≥ 1900 e não futuro, só
+  com dia/mês. Mesmo para a secretária.
+- Consultas: inteiros ≥ 0; particulares ≤ total; com `acceptsPrivate: false`, particulares vazio ou 0.
+  `consultationFee`: decimal ≥ 0, até 2 casas.
+- `visitHours`: até 14 faixas; `start < end`.
+- `partnerSince`: `YYYY-MM-DD`, não futura.
+- `addressZip`: 8 dígitos (pontuação é ignorada); `addressState`: uma das 27 UFs.
+
+**Filtros novos em `GET /doctors`:** `?specialtyId=<uuid>` e `?abcClass=A|B|C`.
+
+#### GET /doctors/specialties
+Todos os papéis. `?active=true|false` (omitido = todas). Lista curta, **sem paginação** (exceção ao
+envelope, como `/conversations/assignees`), em ordem de nome. Laboratório sem nenhuma especialidade
+é semeado aqui com a lista padrão (D-328 item 1).
+**Response (200):** `{ "specialties": [{ "id", "name", "isActive" }] }`
+
+#### POST /doctors/specialties (gestor/admin)
+**Request:** `{ "name": "Medicina Funcional" }` (1–120, aparado). **Response (201):** a
+`DoctorSpecialty`, crua. Audit `create_doctor_specialty`.
+**Erros:** `VALIDATION_ERROR` (400), **`DOCTOR_SPECIALTY_ALREADY_EXISTS`** (409 — mesmo nome sem
+acento/caixa, ativa ou inativa; `details: { existingSpecialty: { id, name, isActive } }`),
+`FORBIDDEN` (403, atendente/`platform_operator`).
+
+#### PATCH /doctors/specialties/:id (gestor/admin)
+**Request:** `{ "name"?: string, "isActive"?: boolean }`. Renomear para nome já usado → 409 igual ao
+POST. Inativar não mexe nos médicos que já a usam. **Response (200):** a `DoctorSpecialty`. Audit
+`update_doctor_specialty` (só o que mudou). Os médicos com a especialidade passam a mostrar o nome
+novo (e a coluna antiga `doctors.specialty` deles é atualizada junto — escrita dupla).
+**Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant), `VALIDATION_ERROR` (400),
+`DOCTOR_SPECIALTY_ALREADY_EXISTS` (409), `FORBIDDEN` (403).
+
+#### POST /doctors/abc/recalculate (gestor/admin)
+Sem corpo. Recalcula a curva ABC do laboratório agora (o agendador faz o mesmo todo dia — D-328
+item 9). **Response (200):**
+```json
+{ "calculatedAt": "2026-11-21T14:02:11.000Z", "windowStart": "2025-11-21T14:02:11.000Z",
+  "doctors": 48, "counts": { "A": 6, "B": 9, "C": 33 } }
+```
+Audit `recalculate_doctor_abc` (`entityType: "doctor_abc"`, `entityId` = tenant, `newValues` = a
+resposta). **Erros:** `FORBIDDEN` (403, atendente/`platform_operator`).
+
+As 4 rotas entram no inventário de isolamento (132 → 136). Ficam registradas **antes** de
+`/doctors/:id` no router (senão `specialties`/`abc` cairiam na validação de uuid).
 
 ### Linha do tempo do médico (CRMLAB-89, D-261)
 

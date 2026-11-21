@@ -197,6 +197,8 @@ interface Lab {
   visitAttachment: { id: string };
   /** Registro manual (ligacao) na linha do tempo de `doctor` (CRMLAB-89, D-261). */
   doctorInteraction: { id: string };
+  /** Especialidade da lista do laboratorio (CRMLAB-188, D-328). */
+  doctorSpecialty: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
   media: { id: string };
   /** Mensagem do paciente na `conversation` — alvo de reação (CRMLAB-66). */
@@ -628,7 +630,7 @@ const LAB_ROUTES: readonly LabRoute[] = [
     name: 'PATCH /doctors/:id',
     method: 'patch',
     path: (l) => `/api/v1/doctors/${l.doctor.id}`,
-    body: () => ({ specialty: 'Sonda' }),
+    body: () => ({ clinic: 'Sonda' }),
     actor: 'attendant',
     addressable: true,
     ownStatus: 200,
@@ -683,6 +685,38 @@ const LAB_ROUTES: readonly LabRoute[] = [
     actor: 'attendant',
     addressable: true,
     ownStatus: 204,
+  },
+  // --- cadastro ampliado (CRMLAB-188, D-328): lista de especialidades e curva ABC ---
+  {
+    name: 'GET /doctors/specialties',
+    method: 'get',
+    path: () => '/api/v1/doctors/specialties',
+    actor: 'attendant',
+    addressable: false,
+  },
+  {
+    name: 'POST /doctors/specialties',
+    method: 'post',
+    path: () => '/api/v1/doctors/specialties',
+    body: () => ({ name: 'Sonda de isolamento' }),
+    actor: 'manager',
+    addressable: false,
+  },
+  {
+    name: 'PATCH /doctors/specialties/:id',
+    method: 'patch',
+    path: (l) => `/api/v1/doctors/specialties/${l.doctorSpecialty.id}`,
+    body: () => ({ isActive: false }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'POST /doctors/abc/recalculate',
+    method: 'post',
+    path: () => '/api/v1/doctors/abc/recalculate',
+    actor: 'manager',
+    addressable: false,
   },
 
   // --- agenda de visitas (CRMLAB-87, D-256): todo papel de laboratorio escreve ---
@@ -1324,6 +1358,14 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
   );
   const doctor = { id: doctorRow.rows[0]?.id as string };
 
+  const doctorSpecialtyRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_specialties (tenant_id, name, normalized_name) VALUES ($1, $2, $3) RETURNING id`,
+      [tenant.id, `Especialidade ${prefix}`, `especialidade ${prefix.toLowerCase()}`],
+    ),
+  );
+  const doctorSpecialty = { id: doctorSpecialtyRow.rows[0]?.id as string };
+
   const doctorInteractionRow = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
       `INSERT INTO doctor_interactions (tenant_id, doctor_id, type, occurred_at, description, created_by)
@@ -1446,6 +1488,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     checkedInVisit,
     visitAttachment,
     doctorInteraction,
+    doctorSpecialty,
     media,
     message,
     internalAttachment,
@@ -1585,7 +1628,9 @@ describe('inventario de rotas de laboratorio', () => {
     // `POST /settings/capture-devices/:id/pairing-code`, `DELETE /settings/capture-devices/:id`,
     // `GET /scans`, `GET /scans/:id/content` e `DELETE /scans/:id`.
     // CRMLAB-186/D-326 soma 1: `POST /users/:id/reset-password`.
-    expect(LAB_ROUTES).toHaveLength(132);
+    // CRMLAB-188/D-328 soma 4: `GET|POST /doctors/specialties`,
+    // `PATCH /doctors/specialties/:id` e `POST /doctors/abc/recalculate`.
+    expect(LAB_ROUTES).toHaveLength(136);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

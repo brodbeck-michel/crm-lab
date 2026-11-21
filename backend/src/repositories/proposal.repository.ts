@@ -67,6 +67,9 @@ export interface ProposalRow {
   insurance_id: string | null;
   /** Medico solicitante, texto livre (CRMLAB-9). `null` = nao informado. Imutavel apos a criacao. */
   requesting_doctor: string | null;
+  /** Medico do cadastro (CRMLAB-188, D-328) e o nome dele (JOIN). Ausentes em SELECTs parciais. */
+  doctor_id?: string | null;
+  doctor_name?: string | null;
   /** Conciliacao com o LIS (CRMLAB-52, D-118/D-119). Escritas so por `setLisBudgetNumber` e pelo LisReconcileService. */
   lis_budget_number: string | null;
   lis_requisition_number: string | null;
@@ -164,7 +167,7 @@ const SELECT_PROPOSAL = `
          p.status, p.discount_percent, p.total_price, p.reason_lost,
          p.approval_status, p.approved_by, a.name AS approved_by_name,
          p.approved_at, p.sent_at, p.closed_at, p.created_at, p.updated_at,
-         p.insurance_id, p.requesting_doctor,
+         p.insurance_id, p.requesting_doctor, p.doctor_id, dr.name AS doctor_name,
          p.lis_budget_number, p.lis_requisition_number, p.lis_paid_value,
          to_char(p.lis_paid_on, 'YYYY-MM-DD') AS lis_paid_on, p.lis_reconciled_at,
          to_char(lb.issued_on, 'YYYY-MM-DD') AS lis_issued_on, lb.attendant_name AS lis_attendant_name,
@@ -178,7 +181,8 @@ const SELECT_PROPOSAL = `
     ${FROM_PROPOSAL}
     LEFT JOIN users pru ON pru.id = pr.created_by
     LEFT JOIN users u ON u.id = p.created_by
-    LEFT JOIN users a ON a.id = p.approved_by`;
+    LEFT JOIN users a ON a.id = p.approved_by
+    LEFT JOIN doctors dr ON dr.id = p.doctor_id`;
 
 function mapOpenReminder(row: ProposalRow): ProposalReminder | null {
   if (!row.reminder_id) return null;
@@ -268,6 +272,8 @@ export function mapDetail(
     sentAt: toIsoOrNull(row.sent_at),
     history,
     requestingDoctor: row.requesting_doctor,
+    doctorId: row.doctor_id ?? null,
+    doctorName: row.doctor_name ?? null,
     lisPaidValue: row.lis_paid_value === null ? null : toNumber(row.lis_paid_value),
     lisPaidOn: row.lis_paid_on,
     reminders: extra.reminders,
@@ -437,6 +443,8 @@ export interface ProposalInsert {
   insuranceId: string | null;
   /** Medico solicitante, texto livre (CRMLAB-9). `null` = nao informado. Imutavel apos a criacao. */
   requestingDoctor: string | null;
+  /** Medico do cadastro (CRMLAB-188, D-328), ja validado pelo service. */
+  doctorId?: string | null;
 }
 
 export interface ProposalItemInsert {
@@ -464,6 +472,22 @@ async function nextProposalNumber(tx: DbTx, tenantId: string): Promise<number> {
   return toNumber(result.rows[0]?.next, 1);
 }
 
+/**
+ * Medico do cadastro para vincular a proposta (CRMLAB-188, D-328). Leitura de
+ * apoio: o RLS de `doctors` ja esconde o de outro tenant (-> `null`).
+ */
+export async function findDoctorRef(
+  tx: DbTx,
+  id: string,
+): Promise<{ id: string; name: string; isActive: boolean } | null> {
+  const result = await tx.query<{ id: string; name: string; is_active: boolean }>(
+    'SELECT id, name, is_active FROM doctors WHERE id = $1',
+    [id],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id, name: row.name, isActive: row.is_active } : null;
+}
+
 export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<string> {
   const proposalNumber = await nextProposalNumber(tx, input.tenantId);
 
@@ -471,8 +495,8 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
     `INSERT INTO proposals (tenant_id, conversation_id, created_by, status,
                             discount_percent, total_price, approval_status,
                             approved_by, approved_at, insurance_id, proposal_number,
-                            requesting_doctor)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            requesting_doctor, doctor_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING id`,
     [
       input.tenantId,
@@ -487,6 +511,7 @@ export async function insertProposal(tx: DbTx, input: ProposalInsert): Promise<s
       input.insuranceId,
       proposalNumber,
       input.requestingDoctor,
+      input.doctorId ?? null,
     ],
   );
   const row = result.rows[0];
@@ -626,6 +651,8 @@ export interface ProposalPatch {
   closedAt?: string | null;
   /** So gravado por `updateItems` (CRMLAB-12, D-132). */
   requestingDoctor?: string | null;
+  /** Idem (CRMLAB-188, D-328). `null` desvincula. */
+  doctorId?: string | null;
 }
 
 const PATCH_COLUMNS: Record<keyof ProposalPatch, string> = {
@@ -639,6 +666,7 @@ const PATCH_COLUMNS: Record<keyof ProposalPatch, string> = {
   sentAt: 'sent_at',
   closedAt: 'closed_at',
   requestingDoctor: 'requesting_doctor',
+  doctorId: 'doctor_id',
 };
 
 /**

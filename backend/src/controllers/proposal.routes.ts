@@ -114,6 +114,8 @@ export const createProposalSchema = z
     // service ainda converte string vazia para `null` (ver
     // `normalizeRequestingDoctor`). Sem cadastro/autocomplete de medicos.
     requestingDoctor: z.string().trim().max(255).nullable().optional(),
+    // CRMLAB-188 (D-328): medico do cadastro. Ativo e do tenant: o service confere.
+    doctorId: z.uuid().nullable().optional(),
   })
   .strict();
 
@@ -144,6 +146,8 @@ export const updateItemsSchema = z
       .max(100),
     discountPercent: z.number().min(0).max(100).optional(),
     requestingDoctor: z.string().trim().max(255).nullable().optional(),
+    // CRMLAB-188 (D-328): medico do cadastro. Ativo e do tenant: o service confere.
+    doctorId: z.uuid().nullable().optional(),
   })
   .strict();
 
@@ -287,6 +291,7 @@ export function createProposal(service: ProposalService): RequestHandler {
       ...(dto.discountPercent !== undefined ? { discountPercent: dto.discountPercent } : {}),
       ...(dto.insuranceId !== undefined ? { insuranceId: dto.insuranceId } : {}),
       ...(dto.requestingDoctor !== undefined ? { requestingDoctor: dto.requestingDoctor } : {}),
+      ...(dto.doctorId !== undefined ? { doctorId: dto.doctorId } : {}),
     });
     res.status(201).json(created);
   });
@@ -336,6 +341,7 @@ export function updateProposalItems(service: ProposalService): RequestHandler {
       items: dto.items,
       ...(dto.discountPercent !== undefined ? { discountPercent: dto.discountPercent } : {}),
       ...(dto.requestingDoctor !== undefined ? { requestingDoctor: dto.requestingDoctor } : {}),
+      ...(dto.doctorId !== undefined ? { doctorId: dto.doctorId } : {}),
     });
     res.status(200).json(detail);
   });

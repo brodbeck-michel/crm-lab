@@ -251,6 +251,21 @@ function isLossReason(value: string): value is LossReason {
  * `undefined`/`null`/branco -> `null` (BUSINESS_RULES §10 — null tem um so
  * significado: "nenhum medico informado"). String vazia nunca e gravada.
  */
+/**
+ * Medico do cadastro para vincular (CRMLAB-188, D-328): ativo e visivel no
+ * tenant (o RLS esconde o de outro laboratorio). Inexistente, inativo ou de
+ * outro tenant -> o MESMO `VALIDATION_ERROR` (nao revela qual).
+ */
+async function resolveActiveDoctor(tx: DbTx, doctorId: string): Promise<{ id: string; name: string }> {
+  const doctor = await repo.findDoctorRef(tx, doctorId);
+  if (!doctor || !doctor.isActive) {
+    throw new BusinessError('VALIDATION_ERROR', {
+      fields: { doctorId: 'Médico inexistente ou inativo neste laboratório' },
+    });
+  }
+  return doctor;
+}
+
 function normalizeRequestingDoctor(value: string | null | undefined): string | null {
   if (value === undefined || value === null) return null;
   const trimmed = value.trim();
@@ -672,6 +687,15 @@ export class ProposalService {
       // telefone do paciente.
       await this.loadVisibleConversation(tx, ctx, dto.conversationId);
 
+      // CRMLAB-188 (D-328): medico do cadastro, ativo e do tenant. Sem texto,
+      // o medico solicitante recebe o nome dele.
+      const doctorId = dto.doctorId ?? null;
+      let requestingDoctorText = requestingDoctor;
+      if (doctorId !== null) {
+        const doctor = await resolveActiveDoctor(tx, doctorId);
+        requestingDoctorText ??= doctor.name;
+      }
+
       const userLimit = await readDiscountLimit(tx, ctx.userId, ctx.discountLimit);
       const withinLimit = discountPercent <= userLimit;
       const approvalStatus: ApprovalStatus = withinLimit ? 'approved' : 'pending';
@@ -689,7 +713,8 @@ export class ProposalService {
         approvedBy: withinLimit ? ctx.userId : null,
         approvedAt: withinLimit ? now : null,
         insuranceId,
-        requestingDoctor,
+        requestingDoctor: requestingDoctorText,
+        doctorId,
       });
 
       await repo.insertItems(tx, ctx.tenantId, id, items);
@@ -715,6 +740,7 @@ export class ProposalService {
         totalPrice: created.detail.totalPrice,
         approvalStatus: created.detail.approvalStatus,
         requestingDoctor: created.detail.requestingDoctor,
+        doctorId: created.detail.doctorId ?? null,
         items: items.map((item) => ({
           examId: item.examId,
           examName: item.examName,
@@ -1167,6 +1193,7 @@ export class ProposalService {
       items: CreateProposalItemInput[];
       discountPercent?: number;
       requestingDoctor?: string | null;
+      doctorId?: string | null;
     },
   ): Promise<ProposalDetail> {
     const { db, audit, approvals, examCatalog } = this.deps;
@@ -1260,10 +1287,18 @@ export class ProposalService {
       }
 
       const totalPrice = calculateTotal(items, discountPercent);
-      const requestingDoctor =
+      let requestingDoctor =
         dto.requestingDoctor !== undefined
           ? normalizeRequestingDoctor(dto.requestingDoctor)
           : row.requesting_doctor;
+      // CRMLAB-188 (D-328): ausente mantem; trocar exige medico ativo; manter
+      // o atual vale mesmo inativado depois.
+      const previousDoctorId = row.doctor_id ?? null;
+      const doctorId = dto.doctorId !== undefined ? dto.doctorId : previousDoctorId;
+      if (doctorId !== null && doctorId !== previousDoctorId) {
+        const doctor = await resolveActiveDoctor(tx, doctorId);
+        requestingDoctor ??= doctor.name;
+      }
       const now = new Date().toISOString();
 
       await repo.deleteItems(tx, id);
@@ -1273,6 +1308,7 @@ export class ProposalService {
         discountPercent,
         totalPrice,
         requestingDoctor,
+        ...(doctorId !== previousDoctorId ? { doctorId } : {}),
         approvalStatus: withinLimit ? 'approved' : 'pending',
         approvedBy: withinLimit ? ctx.userId : null,
         approvedAt: withinLimit ? now : null,
@@ -1287,6 +1323,7 @@ export class ProposalService {
           totalPrice: Number(row.total_price),
           approvalStatus: row.approval_status,
           requestingDoctor: row.requesting_doctor,
+          doctorId: previousDoctorId,
         },
         withinLimit,
       };
@@ -1301,6 +1338,7 @@ export class ProposalService {
         totalPrice: outcome.previous.totalPrice,
         approvalStatus: outcome.previous.approvalStatus,
         requestingDoctor: outcome.previous.requestingDoctor,
+        doctorId: outcome.previous.doctorId,
       },
       newValues: {
         items: outcome.detail.items.map((item) => ({
@@ -1314,6 +1352,7 @@ export class ProposalService {
         totalPrice: outcome.detail.totalPrice,
         approvalStatus: outcome.detail.approvalStatus,
         requestingDoctor: outcome.detail.requestingDoctor,
+        doctorId: outcome.detail.doctorId ?? null,
       },
     });
 

@@ -87,6 +87,8 @@ export type ApiErrorCode =
   // Visitação Médica (CRMLAB-86, D-255)
   /** CRM + UF já usados por outro médico do laboratório (ativo ou inativo). */
   | 'DOCTOR_CRM_ALREADY_EXISTS'
+  /** Especialidade com o mesmo nome (sem acento/caixa) já na lista do laboratório (CRMLAB-188, D-328). */
+  | 'DOCTOR_SPECIALTY_ALREADY_EXISTS'
   /** Editar, reagendar ou encerrar visita que já não está `agendada` (CRMLAB-87, D-256). */
   | 'VISIT_ALREADY_CLOSED'
   /** Check-out sem check-in (CRMLAB-88, D-258). */

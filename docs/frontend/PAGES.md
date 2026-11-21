@@ -1779,6 +1779,26 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
 - **Inativar/Reativar:** sem confirmação (é reversível); toast "Médico inativado"/"Médico
   reativado" e a lista recarrega.
 - **O nome do médico** (na tabela e no cartão) é link para a ficha (§22b, CRMLAB-89).
+- **CRMLAB-188 (D-328):**
+  - Filtros a mais: `Select` "Todas as especialidades" (`?specialtyId=`, de
+    `GET /doctors/specialties`) e `Select` "Curva ABC: todas | A | B | C" (`?abcClass=`).
+  - Coluna/cartão mostram o **selo ABC** (`AbcBadge`: `Chip` A positive, B attention, C inactive) ao
+    lado do nome, com `Tooltip` "Base: R$ X nos últimos 12 meses, calculado em dd/mm". Sem cálculo
+    ainda: sem selo.
+  - Gestor/admin veem [Recalcular curva ABC] no topo (`POST /doctors/abc/recalculate`, toast com as
+    contagens).
+  - **Formulário** (`DoctorModal`) em seções com título: **Dados do médico** (Nome*, CRM, UF,
+    Especialidade — `Select` da lista ativa + "+ nova especialidade" para gestor/admin, que abre um
+    campo inline e cria pela API; Aniversário dia/mês/ano; Telefone/WhatsApp; E-mail; Responsável;
+    Observações), **Clínica** (Clínica/consultório; Atende particular: Não informado/Sim/Não;
+    Consultas/mês; Particulares/mês; Valor da consulta), **Horário para representante** (linhas com
+    7 caixas de dia + início + fim, [+ faixa] e [remover]; "Observação de horário" = texto antigo),
+    **Parceria** (É parceiro; Parceiro desde; Anotações), **Endereço** (CEP — ao completar 8 dígitos
+    consulta o ViaCEP no navegador e preenche os campos vazios, falha em silêncio —, Logradouro,
+    Número, Complemento, Bairro, Cidade, UF; o endereço texto antigo aparece como nota só leitura) e
+    **Secretária** (Nome, Aniversário, Telefone/WhatsApp, Anotações). O modal rola por dentro.
+    Validação local espelha a do servidor (aniversário, particulares ≤ total, faixa com dia e
+    início < fim); `VALIDATION_ERROR` com `fields` marca o campo.
 
 ---
 
@@ -1806,6 +1826,18 @@ TENANT_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors/:id
   registro) e Descrição*. A tela barra descrição vazia; `VALIDATION_ERROR` com `fields` (ex.: data
   no futuro) marca o campo.
 - **Médico de outro laboratório ou inexistente:** "Médico não encontrado" (nunca "sem permissão").
+- **CRMLAB-188 (D-328):** o cartão de dados vira **seções** — **Dados do médico** (especialidade,
+  aniversário, telefone com link **WhatsApp** `wa.me`, e-mail, responsável, observações),
+  **Clínica**, **Horário para representante** (faixas "Ter, Qui · 13:30–15:00" + observação de
+  horário), **Parceria**, **Endereço** (estruturado; sem ele, o texto antigo) e **Secretária** (com
+  link WhatsApp). Selo ABC no topo, com o mesmo tooltip da lista. Seção sem nenhum dado mostra
+  "Não informado".
+
+#### Formulário de proposta — médico do cadastro (CRMLAB-188, D-328)
+Em Novo orçamento (`SummaryColumn`) e na edição da proposta (`ProposalModal`), o campo "Médico
+solicitante" ganha uma **busca no cadastro** (`DoctorPicker`: digita nome ou CRM, lista até 8 médicos
+ativos de `GET /doctors?search=&active=true`). Escolher vincula `doctorId` e preenche o texto com o
+nome; [desvincular] limpa só o vínculo. Texto livre continua possível sem vínculo.
 
 ---
 

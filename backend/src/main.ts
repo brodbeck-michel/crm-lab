@@ -12,6 +12,7 @@ import { createWsHub } from './lib/ws-hub.js';
 import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
 import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
 import { createLisSyncServiceFromDeps } from './controllers/lis-sync.routes.js';
+import { createDoctorAbcServiceFromDeps } from './controllers/doctor.routes.js';
 import { createFunnelTimerService } from './services/funnel-timer.service.js';
 import { syncEvolutionWebhooks } from './services/channel-settings.service.js';
 import { createMessageService } from './services/message.service.js';
@@ -22,6 +23,8 @@ import { createAuditService } from './services/audit.service.js';
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** Expiracao da fila Digitalizacoes (CRMLAB-184, D-327 — API_CONTRACTS §15.4). */
 const SCAN_EXPIRE_INTERVAL_MS = 30 * 60 * 1000;
+/** Recalculo diario da curva ABC dos medicos (CRMLAB-188, D-328). */
+const DOCTOR_ABC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 async function bootstrap(): Promise<void> {
   const db = await getDb();
@@ -182,6 +185,20 @@ async function bootstrap(): Promise<void> {
     void scanService.expireDue();
   }, SCAN_EXPIRE_INTERVAL_MS);
   scanExpireInterval.unref();
+
+  // =========================================================================
+  // Curva ABC dos medicos (CRMLAB-188, D-328)
+  // =========================================================================
+  // Mesmo padrao acima: roda no boot e a cada 24 h; `runScheduledTick` nao
+  // lanca (cada laboratorio tem o proprio try/catch) e ignora o tique se o
+  // anterior ainda roda. Lista so os `tenant_id` com medico via
+  // `withoutTenant()` (excecao em SCHEMA.md); o calculo roda com `withTenant()`.
+  const doctorAbc = createDoctorAbcServiceFromDeps({ db });
+  void doctorAbc.runScheduledTick();
+  const doctorAbcInterval = setInterval(() => {
+    void doctorAbc.runScheduledTick();
+  }, DOCTOR_ABC_INTERVAL_MS);
+  doctorAbcInterval.unref();
 
   // =========================================================================
   // Webhook do Evolution reaplicado em toda instancia QR (CRMLAB-66, D-223)

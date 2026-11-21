@@ -159,7 +159,7 @@ function isSortable(value: string): boolean {
  * Quem cadastra, edita, inativa e precifica o catalogo: atendente, gestor e
  * admin (CRMLAB-78, D-248). O operador da plataforma fica de fora.
  */
-export const CATALOG_WRITE_ROLES = ['attendant', 'manager', 'admin'] as const;
+export const CATALOG_WRITE_ROLES = ['attendant', 'representative', 'manager', 'admin'] as const;
 
 /** "A UI esconde, o servidor recusa" — a rota ja barra, o service confere de novo. */
 function assertCanWrite(ctx: TenantContext): void {

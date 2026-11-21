@@ -37,10 +37,13 @@ export type NavIcon =
   | 'account'
   | 'visitation'
   | 'doctors'
-  | 'agenda';
+  | 'agenda'
+  | 'portfolios';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
-export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'] as const;
+export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'] as const;
+/** Visitação Médica (CRMLAB-189, D-329): a atendente fica de fora. */
+export const VISITATION: readonly UserRole[] = ['representative', 'manager', 'admin'] as const;
 export const MANAGER_PLUS: readonly UserRole[] = ['manager', 'admin'] as const;
 export const ADMIN_ONLY: readonly UserRole[] = ['admin'] as const;
 export const PLATFORM_ONLY: readonly UserRole[] = ['platform_operator'] as const;
@@ -155,25 +158,34 @@ export const APP_ROUTES: readonly AppRoute[] = [
     inSidebar: false,
   },
   {
-    // CRMLAB-87 (D-256): agenda de visitas — todos os papéis do laboratório veem e mexem em todas.
+    // CRMLAB-87 (D-256) · D-329: representante (escopo dele), gestor e admin.
     path: '/visitation/agenda',
     label: 'Agenda',
-    requiredRoles: TENANT_ROLES,
+    requiredRoles: VISITATION,
     inSidebar: true,
     icon: 'agenda',
     group: 'visitacao',
   },
   {
-    // CRMLAB-86 (D-255): todos os papéis do laboratório veem e editam.
+    // CRMLAB-86 (D-255) · D-329: representante (carteira dele), gestor e admin.
     path: '/visitation/doctors',
     label: 'Médicos',
-    requiredRoles: TENANT_ROLES,
+    requiredRoles: VISITATION,
     inSidebar: true,
     icon: 'doctors',
     group: 'visitacao',
   },
+  {
+    // CRMLAB-189 (D-329): carteiras por representante + transferência em lote.
+    path: '/visitation/portfolios',
+    label: 'Carteiras',
+    requiredRoles: MANAGER_PLUS,
+    inSidebar: true,
+    icon: 'portfolios',
+    group: 'visitacao',
+  },
   // CRMLAB-89 (D-261): ficha do médico com a linha do tempo — aberta pela lista, fora da Sidebar.
-  { path: '/visitation/doctors/:id', label: 'Ficha do Médico', requiredRoles: TENANT_ROLES, inSidebar: false },
+  { path: '/visitation/doctors/:id', label: 'Ficha do Médico', requiredRoles: VISITATION, inSidebar: false },
   {
     path: '/sales',
     label: 'Vendas',
@@ -331,6 +343,8 @@ export const APP_ROUTES: readonly AppRoute[] = [
  */
 export const ROLE_HOME: Readonly<Record<UserRole, string>> = {
   attendant: '/attendance',
+  // D-329: o dia do representante é a agenda de visitas.
+  representative: '/visitation/agenda',
   manager: '/proposals',
   admin: '/proposals',
   platform_operator: '/platform/tenants',

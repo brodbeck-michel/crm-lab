@@ -41,7 +41,7 @@ import { createUserPresenceService } from '../services/user-presence.service.js'
 import { createUserService, MIN_PASSWORD_LENGTH } from '../services/user.service.js';
 import { MIN_NEW_PASSWORD_LENGTH } from '../lib/password-policy.js';
 
-const assignableRole = z.enum(['attendant', 'manager', 'admin']);
+const assignableRole = z.enum(['attendant', 'representative', 'manager', 'admin']);
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),

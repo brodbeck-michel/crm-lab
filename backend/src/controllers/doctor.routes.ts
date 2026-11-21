@@ -17,12 +17,18 @@
  *
  * Cadastro ampliado (CRMLAB-188, D-328):
  *
- *   GET   /api/v1/doctors/specialties        lista do laboratorio (todo papel)
+ *   GET   /api/v1/doctors/specialties        lista do laboratorio (perfis da Visitacao)
  *   POST  /api/v1/doctors/specialties        cria (gestor/admin)
  *   PATCH /api/v1/doctors/specialties/:id    renomeia/inativa (gestor/admin)
  *   POST  /api/v1/doctors/abc/recalculate    recalcula a curva ABC (gestor/admin)
  *
- * As demais para qualquer papel de laboratorio (D-255 item 3: sem perfil novo).
+ * Carteiras (CRMLAB-189, D-329 — gestor/admin):
+ *
+ *   GET   /api/v1/doctors/portfolios       medicos por responsavel
+ *   POST  /api/v1/doctors/transfer         transferencia em lote
+ *
+ * TODAS exigem representante, gestor ou admin (D-329; a atendente recebe 403).
+ * O representante so alcanca a propria carteira (o service recorta; fora -> 404).
  * NAO existe DELETE: a agenda de visitas (CRMLAB-85) vai referenciar o medico.
  *
  * Controller fino (CONVENTIONS.md): valida o DTO, chama o service, responde.
@@ -38,6 +44,8 @@ import {
   DOCTOR_TIMELINE_MAX_LIMIT,
   DOCTOR_VISIT_HOURS_MAX,
   isValidTimeHHMM,
+  DOCTOR_TRANSFER_MAX,
+  VISITATION_ROLES,
   type CreateDoctorInteractionRequest,
   type CreateDoctorRequest,
   type CreateDoctorSpecialtyRequest,
@@ -50,8 +58,11 @@ import {
   type DoctorInteraction,
   type DoctorTimelineQuery,
   type DoctorTimelineResponse,
+  type ListDoctorPortfoliosResponse,
   type ListDoctorsQuery,
   type ListDoctorsResponse,
+  type TransferDoctorsRequest,
+  type TransferDoctorsResponse,
   type UpdateDoctorInteractionRequest,
   type UpdateDoctorRequest,
 } from '@crm-lab/shared';
@@ -110,6 +121,7 @@ export const listDoctorsQuerySchema = z.object({
   responsibleId: z.uuid().optional(),
   specialtyId: z.uuid().optional(),
   abcClass: z.enum(DOCTOR_ABC_CLASSES).optional(),
+  unassigned: booleanish.optional(),
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(MAX_LIMIT).optional(),
   sortBy: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
@@ -191,6 +203,15 @@ export const updateDoctorSchema = z
   .strict();
 
 export const doctorIdParamSchema = z.object({ id: z.uuid() });
+
+/** Repeticao de id e regra do service (mensagem propria). */
+export const transferDoctorsSchema = z
+  .object({
+    doctorIds: z.array(z.uuid()).min(1).max(DOCTOR_TRANSFER_MAX),
+    toUserId: z.uuid(),
+    includeFutureVisits: z.boolean().optional(),
+  })
+  .strict();
 
 // --- linha do tempo (CRMLAB-89, D-261) ---
 
@@ -283,6 +304,21 @@ export function setDoctorActive(service: DoctorService, isActive: boolean): Requ
   });
 }
 
+export function listDoctorPortfolios(service: DoctorService): RequestHandler {
+  return handle(async (req, res) => {
+    const body: ListDoctorPortfoliosResponse = await service.portfolios(getContext(req));
+    res.status(200).json(body);
+  });
+}
+
+export function transferDoctors(service: DoctorService): RequestHandler {
+  return handle(async (req, res) => {
+    const dto = validated<TransferDoctorsRequest>(req, 'body');
+    const body: TransferDoctorsResponse = await service.transfer(getContext(req), dto);
+    res.status(200).json(body);
+  });
+}
+
 export function getDoctorTimeline(service: DoctorInteractionService): RequestHandler {
   return handle(async (req, res) => {
     const { id } = validated<{ id: string }>(req, 'params');
@@ -356,9 +392,11 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
   const specialties = createDoctorSpecialtyServiceFromDeps(deps);
   const abc = createDoctorAbcServiceFromDeps(deps);
   const router = Router();
-  // Sem `requireRoles`: todo papel de laboratorio escreve (D-255 item 3). O
-  // operador da plataforma fica de fora explicitamente (PAGES.md §11).
-  const guards = [requireAuth(), denyPlatformOperator()];
+  // D-329: representante, gestor e admin (a atendente recebe 403 por perfil). O
+  // operador da plataforma fica de fora antes (PAGES.md §11). O recorte por
+  // carteira do representante e do service (fora dela -> 404).
+  const guards = [requireAuth(), denyPlatformOperator(), requireRoles(...VISITATION_ROLES)];
+  const managerGuards = [requireAuth(), denyPlatformOperator(), requireRoles('manager', 'admin')];
   const idParam = validate(doctorIdParamSchema, 'params');
   // Lista de especialidades e recalculo da curva ABC: gestor/admin (D-328).
   // ANTES de `/:id`, senao `specialties`/`abc` cairiam na validacao de uuid.
@@ -385,6 +423,10 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
   );
   router.post('/abc/recalculate', ...managers, recalculateDoctorAbc(abc));
 
+  // Antes de `/:id`: senao "portfolios" cairia no validador de uuid.
+  router.get('/portfolios', ...managerGuards, listDoctorPortfolios(service));
+  router.post('/transfer', ...managerGuards, validate(transferDoctorsSchema, 'body'), transferDoctors(service));
+
   router.get('/', ...guards, validate(listDoctorsQuerySchema, 'query'), listDoctors(service));
   router.post('/', ...guards, validate(createDoctorSchema, 'body'), createDoctor(service));
   router.get('/:id', ...guards, idParam, getDoctor(service));
@@ -392,7 +434,7 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
   router.post('/:id/inactivate', ...guards, idParam, setDoctorActive(service, false));
   router.post('/:id/reactivate', ...guards, idParam, setDoctorActive(service, true));
 
-  // Linha do tempo (CRMLAB-89, D-261): todo papel de laboratorio le e lanca.
+  // Linha do tempo (CRMLAB-89, D-261): mesmos guardas; representante so na carteira (D-329).
   const interactionParams = validate(doctorInteractionParamsSchema, 'params');
   router.get('/:id/timeline', ...guards, idParam, validate(doctorTimelineQuerySchema, 'query'), getDoctorTimeline(interactions));
   router.post(

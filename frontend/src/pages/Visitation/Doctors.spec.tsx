@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Doctor, ListDoctorsResponse } from '@crm-lab/shared';
+import type { AuthUser, Doctor, ListDoctorsResponse } from '@crm-lab/shared';
 import { ApiError } from '@/api/client';
 import { conversationsApi } from '@/api/conversations';
 import { doctorsApi } from '@/api/doctors';
@@ -104,11 +104,14 @@ function table() {
 describe('Doctors (/visitation/doctors)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Gestor vê tudo e escolhe o responsável (D-329); o recorte do representante tem spec própria.
+    const manager: AuthUser = { id: 'u-ana', email: 'ana@lab.com', name: 'Ana Gestora', role: 'manager', discountLimit: 30 };
+    useAuthStore.setState({ user: manager });
     listMock.mockResolvedValue(listResponse());
     assigneesMock.mockResolvedValue({
       assignees: [
         { id: 'u-ana', name: 'Ana Gestora', role: 'manager' },
-        { id: 'u-bia', name: 'Bia Atendente', role: 'attendant' },
+        { id: 'u-bia', name: 'Bia Representante', role: 'representative' },
       ],
     });
     specialtiesMock.mockResolvedValue({
@@ -155,7 +158,7 @@ describe('Doctors (/visitation/doctors)', () => {
       expect(listMock).toHaveBeenLastCalledWith({ page: 1, limit: 20, active: true, search: '12345' }),
     );
 
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Bia Atendente' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Bia Representante' })).toBeInTheDocument());
     await user.selectOptions(screen.getByRole('combobox', { name: 'Filtrar por responsável' }), 'u-bia');
     await waitFor(() =>
       expect(listMock).toHaveBeenLastCalledWith({
@@ -280,6 +283,9 @@ describe('Doctors (/visitation/doctors)', () => {
     await user.type(dialog.getByLabelText(NAME_LABEL), 'Dr. Repetido');
     await user.type(dialog.getByLabelText(/^CRM/), '12.345');
     await user.selectOptions(dialog.getByLabelText('UF do CRM'), 'SC');
+    // Responsável é obrigatório no cadastro (D-329).
+    await waitFor(() => expect(dialog.getByRole('option', { name: 'Ana Gestora' })).toBeInTheDocument());
+    await user.selectOptions(dialog.getByLabelText('Responsável pela carteira'), 'u-ana');
     await user.click(dialog.getByRole('button', { name: 'Cadastrar' }));
 
     expect(

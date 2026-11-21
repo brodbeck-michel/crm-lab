@@ -266,7 +266,7 @@ describe('Regras (/settings/rules)', () => {
     renderPage();
 
     const travas = section(/movimentação manual/i);
-    const atendente = within(travas).getByRole('checkbox', { name: 'Atendente' });
+    const atendente = within(travas).getByRole('checkbox', { name: 'Atendente / representante' });
     expect(atendente).toBeDisabled(); // reabrir desligado
     await user.click(within(travas).getByRole('switch', { name: /reabrir/i }));
     await user.click(atendente);

@@ -19,6 +19,7 @@ interface UserModalProps {
 
 const ROLE_OPTIONS = [
   { value: 'attendant', label: 'Atendente' },
+  { value: 'representative', label: 'Representante' },
   { value: 'manager', label: 'Gestor' },
   { value: 'admin', label: 'Administrador' },
 ];
@@ -159,6 +160,7 @@ export default function UserModal({ user, onClose }: UserModalProps) {
           onChange={(e) => {
             const roleOptions: Record<string, UserRole> = {
               attendant: 'attendant',
+              representative: 'representative',
               manager: 'manager',
               admin: 'admin',
             };

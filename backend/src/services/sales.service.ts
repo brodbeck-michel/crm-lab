@@ -12,6 +12,7 @@ import type {
   ListSalesQuery,
   ListSalesResponse,
 } from '@crm-lab/shared';
+import { isFrontlineRole } from '@crm-lab/shared';
 import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
@@ -49,7 +50,7 @@ function clampInt(value: number | undefined, fallback: number, min: number, max:
 
 function assertNotPlatformOperator(ctx: TenantContext): void {
   if (ctx.role === 'platform_operator') {
-    throw new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'manager', 'admin'] });
+    throw new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'representative', 'manager', 'admin'] });
   }
 }
 
@@ -66,7 +67,7 @@ export function createSalesService(deps: SalesServiceDeps): SalesService {
    * `admin` não têm um "próprio atendente" (retorna `undefined`, sem recorte).
    */
   async function ownAttendantId(ctx: TenantContext): Promise<string | null | undefined> {
-    if (ctx.role !== 'attendant') return undefined;
+    if (!isFrontlineRole(ctx.role)) return undefined;
     return db.withTenant(ctx.tenantId, (tx) => findAttendantIdByUserId(tx, ctx.tenantId, ctx.userId));
   }
 

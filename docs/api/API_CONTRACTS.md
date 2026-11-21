@@ -21,6 +21,13 @@ Authorization: Bearer <JWT_TOKEN>
 
 JWT inclui: `{ userId, tenantId, role, exp }`
 
+**Perfis (`UserRole`):** `attendant` · `representative` (D-329) · `manager` · `admin` ·
+`platform_operator`. **Fora da Visitação o `representative` tem exatamente as permissões da
+`attendant`** (D-329 item 2): onde este documento lista `attendant` como perfil de linha de frente
+(papéis de rota, recorte "só as próprias", equipe), o `representative` entra junto. Na Visitação
+(§13, §14) é o inverso: a atendente fica de fora (`403`) e o representante trabalha na própria
+carteira.
+
 ---
 
 ## Envelope de resposta (regra do projeto — D-070)
@@ -351,7 +358,8 @@ Criar usuário no próprio tenant.
 }
 ```
 
-- `role` ∈ `attendant | manager | admin`. `platform_operator` NÃO é atribuível aqui
+- `role` ∈ `attendant | representative | manager | admin` (`representative` desde D-329).
+  `platform_operator` NÃO é atribuível aqui
   (pertence ao console da plataforma) → `VALIDATION_ERROR`.
 - `discountLimit` é opcional: o default vem de `DEFAULT_DISCOUNT_LIMIT[role]`
   (`@crm-lab/shared`, BUSINESS_RULES §2).
@@ -4193,7 +4201,7 @@ contrapartida vale nos dois sentidos:
   ele. Isolamento é requisito, não configuração.
 
 O `403` chega por dois caminhos, com `details.requiredRoles` diferente:
-`denyPlatformOperator()` responde `{ requiredRoles: ["attendant", "manager", "admin"] }`;
+`denyPlatformOperator()` responde `{ requiredRoles: ["attendant", "representative", "manager", "admin"] }`;
 nas rotas que já exigem papel elevado (`PATCH /proposals/:id/approve` e `/reject`,
 `POST /exams`, `PATCH /exams/:id`) quem barra é o próprio `requireRoles`, e o
 `details.requiredRoles` é `["manager", "admin"]`. O frontend faz switch no `code`, não
@@ -6236,9 +6244,18 @@ Tela `/visitation/doctors` (PAGES.md §22). Módulo `/doctors`; shapes em
 `shared/types/doctor.types.ts`; tabela `doctors` (SCHEMA.md §35). Regras em BUSINESS_RULES §12 e
 D-255. Base do épico CRMLAB-85: a agenda de visitas vai referenciar `Doctor.id`.
 
-**Papéis:** as **6 rotas** valem para **todos os papéis do tenant** (sem `requireRoles`, D-255
-item 3). `platform_operator` → `403` (`denyPlatformOperator()`). Entram no inventário de
-isolamento (`route-tenant-isolation.spec.ts`): médico de outro tenant → `404 NOT_FOUND`.
+**Papéis (D-329, revoga D-255 item 3):** todas as rotas de `/doctors` exigem
+`representative`, `manager` ou `admin` (`requireRoles(...VISITATION_ROLES)`). **`attendant` →
+`403 FORBIDDEN`** com `details.requiredRoles: ["representative","manager","admin"]`;
+`platform_operator` → `403` (`denyPlatformOperator()`). Entram no inventário de isolamento
+(`route-tenant-isolation.spec.ts`): médico de outro tenant → `404 NOT_FOUND`.
+
+**Escopo por carteira (D-329 item 4):** gestor e admin veem e alteram **todos** os médicos do
+laboratório. O **representante** só alcança os médicos da **própria carteira**
+(`responsible.id === ele`): médico de outra carteira → **`404 NOT_FOUND`** em todas as rotas
+(detalhe, `PATCH`, inativar/reativar, linha do tempo e registros manuais), e a listagem já vem
+recortada. `GET /doctors/portfolios` e `POST /doctors/transfer` são **só gestor/admin**
+(representante → `403`).
 
 Não existe `DELETE`: inativar é `POST /doctors/:id/inactivate`.
 
@@ -6273,13 +6290,75 @@ responsável.
 ?search=julia             // nome sem caixa nem acento OU CRM pelos dígitos do termo ("12.345" acha 12345)
 ?active=true              // omitido = ativos e inativos (a tela abre em "Ativos")
 ?responsibleId=<uuid>     // só a carteira desse usuário
+?unassigned=true          // D-329: sem responsável, responsável de perfil inelegível (não é
+                          // representative/manager/admin) ou inativo — o filtro de atribuição do gestor
 ?page=1&limit=20          // default page=1, limit=20, máximo 100
 ?sortBy=name&order=asc    // sortBy: name|createdAt|updatedAt (default name asc)
 ```
 
 **Response (200):** `{ "doctors": [Doctor], "pagination": { "page", "limit", "total", "totalPages" } }`
 
-**Erros:** `VALIDATION_ERROR` (400, `responsibleId` não-uuid etc.)
+Para o **representante** a lista é sempre recortada pela carteira dele; os filtros se somam ao
+recorte (`?responsibleId=<outro>` ou `?unassigned=true` devolvem lista vazia, não erro).
+
+**Erros:** `VALIDATION_ERROR` (400, `responsibleId` não-uuid etc.), `FORBIDDEN` (403, `attendant`)
+
+### GET /doctors/portfolios (D-329 — gestor/admin)
+
+Carteiras: quantos médicos cada responsável tem. Tela `/visitation/portfolios` (PAGES.md §22c).
+Shapes `DoctorPortfolio` / `ListDoctorPortfoliosResponse` em `shared/types/doctor.types.ts`.
+
+**Response (200):**
+```json
+{
+  "portfolios": [
+    {
+      "responsible": { "id": "7c3d…", "name": "Carla Souza", "role": "representative" },
+      "doctorCount": 12,
+      "activeDoctorCount": 11
+    }
+  ],
+  "unassigned": { "doctorCount": 3, "activeDoctorCount": 3 }
+}
+```
+- **Linhas:** todo **representante ativo** (mesmo com zero médicos) + todo usuário **ativo** de perfil
+  elegível (`representative`/`manager`/`admin`) que é responsável por ao menos um médico. Ordem por
+  nome.
+- **`unassigned`:** os médicos sem responsável, com responsável de perfil inelegível (atendente) ou
+  inativo — o mesmo recorte de `?unassigned=true`. Cada médico conta **uma vez** (numa linha ou aqui).
+- `doctorCount` conta ativos e inativos; `activeDoctorCount`, só os ativos.
+- **`abc?: { "A": n, "B": n, "C": n, "unclassified": n }`** — corte pela classificação ABC do médico.
+  **Opcional:** só passa a vir quando o campo de classificação (CRMLAB-188) for integrado; até lá a
+  chave não vem e a tela não mostra a coluna.
+
+**Erros:** `FORBIDDEN` (403 — `attendant`, `representative`, `platform_operator`)
+
+### POST /doctors/transfer (D-329 — gestor/admin)
+
+Transferência em lote de médicos para outro responsável. Também é o caminho para **atribuir** os
+médicos sem responsável.
+
+**Request:**
+```json
+{ "doctorIds": ["5b0c…", "9a1e…"], "toUserId": "7c3d…", "includeFutureVisits": true }
+```
+- `doctorIds`: 1 a 200 uuids, sem repetição. Algum inexistente ou de outro tenant → **`404
+  NOT_FOUND`** e **nada** muda (tudo ou nada, uma transação, médicos travados com `FOR UPDATE`).
+- `toUserId`: usuário **ativo** do mesmo laboratório e de perfil elegível; senão `VALIDATION_ERROR`
+  em `toUserId`.
+- Médico que já é do destino é ignorado (não conta, sem audit).
+- `includeFutureVisits` (default `false`): leva junto as visitas **`agendada`** com data **no futuro**
+  desses médicos **cujo responsável era o responsável anterior do médico**. Visita de cobertura
+  (responsável diferente do dono da carteira) não muda.
+
+**Response (200):** `{ "transferredDoctors": 2, "movedVisits": 3 }` (resposta composta).
+
+Audit: `transfer_doctor` por médico (`entityType: "doctor"`, `oldValues: { responsibleId }`,
+`newValues: { responsibleId, movedVisitIds }`) e `transfer_visit` por visita levada
+(`entityType: "visit"`, `oldValues/newValues: { responsibleId }`).
+
+**Erros:** `VALIDATION_ERROR` (400), `NOT_FOUND` (404), `FORBIDDEN` (403 — `attendant`,
+`representative`, `platform_operator`)
 
 ### GET /doctors/:id
 **Response (200):** o `Doctor`, cru. **Erros:** `NOT_FOUND` (404 — inexistente ou de outro tenant),
@@ -6307,8 +6386,10 @@ responsável.
 - `crm` → só dígitos (até 10); `crmUf` → maiúscula, uma das 27 UFs. **`crm` sem `crmUf` →
   `VALIDATION_ERROR`** (`details.fields.crmUf`).
 - `email`, quando preenchido, tem de ser e-mail.
-- `responsibleId`: usuário **ativo** do **mesmo** laboratório, qualquer papel de tenant; senão
-  `VALIDATION_ERROR` (`details.fields.responsibleId`).
+- `responsibleId` (**obrigatório desde D-329** para gestor/admin): usuário **ativo** do **mesmo**
+  laboratório com perfil `representative`, `manager` ou `admin`; ausente, `null` ou fora disso →
+  `VALIDATION_ERROR` (`details.fields.responsibleId`). **Representante:** ausente = ele mesmo; outro
+  usuário → `VALIDATION_ERROR` (só cadastra na própria carteira).
 - Campo fora da lista (ex.: `isActive`) → `VALIDATION_ERROR` (schema estrito).
 
 **Response (201):** o `Doctor`, cru. Gera audit log `create_doctor` (`newValues` com todos os
@@ -6324,6 +6405,12 @@ Parcial: mesmos campos e validações do `POST`, todos opcionais. `null` (ou `""
 que já está gravado: `{ "crm": "999" }` vale se o médico já tem UF. O responsável só é revalidado
 quando **muda** — um médico cujo responsável foi desativado continua editável. `isActive` **não**
 passa aqui (→ `VALIDATION_ERROR`).
+
+**D-329:** um `PATCH` que muda algo e deixa o médico **sem responsável** (`responsibleId: null` ou
+médico antigo que já não tinha) ou com responsável de **perfil inelegível** (ex.: atendente,
+inalterado) → `VALIDATION_ERROR` em `responsibleId` — quem edita precisa atribuir. Responsável
+**inativo** e inalterado continua tolerado. O **representante** só edita médico da carteira dele e
+não troca o responsável para outra pessoa (`VALIDATION_ERROR`); médico de outra carteira → `404`.
 
 **Response (200):** o `Doctor` atualizado. Gera audit log `update_doctor` só com os campos que
 mudaram (`oldValues`/`newValues`); PATCH sem mudança real não gera audit.
@@ -6429,7 +6516,9 @@ As 4 rotas entram no inventário de isolamento (132 → 136). Ficam registradas 
 
 Tela `/visitation/doctors/:id` (PAGES.md §22b). Shapes em `shared/types/doctor-timeline.types.ts`;
 tabela `doctor_interactions` (SCHEMA.md §38); service `DoctorInteractionService` (SERVICES.md §32).
-**Mais 4 rotas**, todas para **todos os papéis do tenant** e no inventário de isolamento (102 → 106).
+**Mais 4 rotas**, no inventário de isolamento (102 → 106). Desde D-329 (revoga D-261 item 8):
+`representative`, `manager` e `admin`; atendente → `403`. O representante só alcança a linha do
+tempo e os registros de médico **da carteira dele**; fora dela → `404`.
 Médico de outro tenant, inexistente, ou registro de **outro médico** no caminho → `404 NOT_FOUND`.
 
 **Objeto `DoctorInteraction`** (registro lançado à mão):
@@ -6528,10 +6617,23 @@ Tela `/visitation/agenda` (PAGES.md §23). Módulo `/visits`; shapes em
 `shared/types/visit.types.ts`; tabelas `doctor_visits` e `doctor_visit_reschedules` (SCHEMA.md §36).
 Regras em BUSINESS_RULES §13 e D-256.
 
-**Papéis:** as **13 rotas** (7 da D-256 + 6 do registro, D-258) valem para **todos os papéis do tenant** (resposta 2A do épico: todos
-veem e mexem em todas as visitas). As finalidades (`/settings/visit-purposes`, CRMLAB-190, fim
-desta seção) são lidas por todos e escritas só por gestor/admin. `platform_operator` → `403`. Entram no inventário de isolamento
+**Papéis (D-329, revoga D-256 item 9):** as **13 rotas** (7 da D-256 + 6 do registro, D-258)
+exigem `representative`, `manager` ou `admin`; **`attendant` → `403 FORBIDDEN`**
+(`details.requiredRoles`), `platform_operator` → `403`. As finalidades (`/settings/visit-purposes`,
+CRMLAB-190, fim desta seção) são lidas por todos os papéis do laboratório e escritas só por
+gestor/admin. Entram no inventário de isolamento
 (`route-tenant-isolation.spec.ts`): visita de outro tenant → `404 NOT_FOUND`.
+
+**Escopo do representante (D-329 item 4):** ele alcança a visita cujo **médico é da carteira dele**
+**ou** em que **ele é o responsável** (cobertura). Fora disso → **`404 NOT_FOUND`** em todas as rotas
+(detalhe, edição, reagendar, cancelar, não recebeu, check-in/out, relato, anexos e download), e
+`GET /visits` já vem recortado (os filtros se somam ao recorte). **Criar/editar:** médico da própria
+carteira (`fields.doctorId`, mesma mensagem do inexistente) e responsável = ele mesmo
+(`fields.responsibleId`). Gestor e admin veem e alteram todas.
+
+**Responsável elegível (D-329 item 5):** usuário ativo do laboratório com perfil `representative`,
+`manager` ou `admin` — atendente → `VALIDATION_ERROR` em `responsibleId` (só quando o responsável
+muda; visita antiga com atendente continua editável).
 
 Não existe `DELETE`: visita se cancela. Datas sempre ISO 8601 **com fuso** (`Z` ou `-03:00`).
 

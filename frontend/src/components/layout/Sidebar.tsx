@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PanelLeftClose, PanelLeftOpen, ChevronRight, LogOut, Check, CircleUserRound } from 'lucide-react';
-import { SELECTABLE_USER_PRESENCE, type UserRole } from '@crm-lab/shared';
+import { SELECTABLE_USER_PRESENCE, isFrontlineRole, type UserRole } from '@crm-lab/shared';
 import { cn, Badge } from '@/components/ui';
 import { Avatar, PresenceDot, USER_PRESENCE_LABELS } from '@/components/shared';
 import { initials } from '@/lib/format';
@@ -60,6 +60,7 @@ const SIDEBAR_MARGIN = 12;
 
 const ROLE_LABELS: Record<UserRole, string> = {
   attendant: 'Atendente',
+  representative: 'Representante',
   manager: 'Gerente',
   admin: 'Administrador',
   platform_operator: 'Operador da Plataforma',
@@ -86,7 +87,7 @@ export function Sidebar() {
 
   // Atendente no inbox: trilho recolhido para dar as 3 colunas inteiras à tela.
   useEffect(() => {
-    if (role === 'attendant' && pathname.startsWith('/attendance')) {
+    if (isFrontlineRole(role) && pathname.startsWith('/attendance')) {
       setSidebarCollapsed(true);
     }
   }, [role, pathname, setSidebarCollapsed]);

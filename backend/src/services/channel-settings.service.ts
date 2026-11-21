@@ -82,7 +82,7 @@ const DISTRIBUTION_MODES: readonly DistributionMode[] = ['manual', 'round_robin'
 
 const WEEK_DAYS: readonly WeekDay[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
-const TEAM_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'];
+const TEAM_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'];
 
 /** Fuso padrao quando o laboratorio nunca configurou (D-065). */
 export const DEFAULT_TIMEZONE = 'America/Sao_Paulo';

@@ -172,11 +172,12 @@ describe('Registro da visita (CRMLAB-88)', () => {
     vi.mocked(conversationsApi.assignees).mockResolvedValue({
       assignees: [
         { id: 'u-ana', name: 'Ana Gestora', role: 'manager' },
-        { id: 'u-bia', name: 'Bia Atendente', role: 'attendant' },
+        { id: 'u-bia', name: 'Bia Atendente', role: 'representative' },
       ],
     });
+    // Gestor vê a Visitação inteira e o filtro por responsável (D-329).
     useAuthStore.setState({
-      user: { id: 'u-bia', email: 'bia@lab.test', name: 'Bia Atendente', role: 'attendant', discountLimit: 5 },
+      user: { id: 'u-ana', email: 'ana@lab.test', name: 'Ana Gestora', role: 'manager', discountLimit: 30 },
     });
   });
 

@@ -102,7 +102,7 @@ export function requireRoles(...roles: UserRole[]): RequestHandler {
 export function denyPlatformOperator(): RequestHandler {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (req.ctx?.role === 'platform_operator') {
-      next(new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'manager', 'admin'] }));
+      next(new BusinessError('FORBIDDEN', { requiredRoles: ['attendant', 'representative', 'manager', 'admin'] }));
       return;
     }
     next();

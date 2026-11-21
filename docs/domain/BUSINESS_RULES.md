@@ -826,11 +826,16 @@ A API do Bitlab manda, por convênio n=1,2,3 (desde 23/10/2026; SERVICES.md §24
 Primeiro card do épico CRMLAB-85. O médico solicitante vira cadastro do laboratório, base da
 agenda de visitas que vem depois.
 
-- **Quem mexe:** todos os usuários do laboratório (atendente, gestor, admin) veem, cadastram,
-  editam e inativam. Não há perfil novo. O operador da plataforma não entra (PAGES.md §11).
-- **Obrigatório:** só o **nome**. O resto é opcional: CRM + UF, especialidade, clínica/consultório,
-  endereço, telefone/WhatsApp, e-mail, secretária/contato, melhor dia e horário para visita (texto
-  livre), observações e responsável pela carteira.
+- **Quem mexe (D-329, revoga a regra do MVP):** só **representante**, **gestor** e **admin**. A
+  **atendente não acessa a Visitação** (menu some e o servidor responde `403`). O operador da
+  plataforma não entra (PAGES.md §11).
+  - **Gestor e admin** veem, cadastram, editam, inativam e transferem **todos** os médicos.
+  - **Representante** vê e mexe só nos médicos da **própria carteira** (é o responsável). Médico de
+    outra carteira não existe para ele (`404`). Cadastra sempre na própria carteira e não passa
+    médico para outra pessoa — transferir carteira é do gestor.
+- **Obrigatório:** o **nome** e, desde D-329, o **responsável pela carteira**. O resto é opcional:
+  CRM + UF, especialidade, clínica/consultório, endereço, telefone/WhatsApp, e-mail,
+  secretária/contato, melhor dia e horário para visita (texto livre) e observações.
 - **CRM:** guardado só com dígitos (`"CRM 12.345"` → `12345`, até 10 dígitos). **Com CRM, a UF é
   obrigatória** e tem de ser uma das 27 (maiúscula). Normalização única em
   `shared/types/doctor.types.ts` (`normalizeCrm`, `normalizeUf`, `BRAZIL_UFS`): tela e servidor usam
@@ -839,10 +844,22 @@ agenda de visitas que vem depois.
   inativo. Duplicidade → `409 DOCTOR_CRM_ALREADY_EXISTS` com o médico que já usa o número (a tela
   diz o nome e, se estiver inativo, manda reativar). Mesmo CRM em outra UF ou em outro laboratório
   pode. Vários médicos sem CRM podem.
-- **Responsável pela carteira:** usuário **ativo** do **mesmo** laboratório, qualquer papel. Usuário
-  de outro laboratório, inativo ou inexistente → `VALIDATION_ERROR` em `responsibleId`. Se o
-  responsável for desativado depois, a carteira fica como está e o médico continua editável; a
-  checagem só roda quando o responsável **muda**.
+- **Responsável pela carteira:** usuário **ativo** do **mesmo** laboratório com perfil
+  **representante, gestor ou admin** (D-329 — a atendente deixou de ser elegível). Usuário de outro
+  laboratório, inativo, inexistente ou de perfil inelegível → `VALIDATION_ERROR` em `responsibleId`.
+  Se o responsável for desativado depois, a carteira fica como está e o médico continua editável; a
+  checagem de ativo só roda quando o responsável **muda**. Editar um médico **sem responsável** ou com
+  responsável de perfil inelegível exige atribuir um responsável válido na mesma edição.
+- **Médicos antigos sem responsável** (ou com atendente como responsável) **não foram alterados** na
+  migração: aparecem para o gestor/admin no filtro **"Sem responsável / responsável inelegível"**
+  (que também pega responsável inativo), de onde ele atribui.
+- **Carteiras (gestor/admin):** tela com cada representante e o total de médicos da carteira (o corte
+  A/B/C entra quando a classificação do médico existir — CRMLAB-188). Clicar abre os médicos daquele
+  responsável.
+- **Transferência em lote (gestor/admin):** escolhe médicos e o novo responsável; opcionalmente leva
+  junto as **visitas futuras agendadas** desses médicos que estavam com o responsável anterior
+  (cobertura combinada com outra pessoa não muda). Tudo ou nada; gera audit por médico e por visita
+  (`transfer_doctor`, `transfer_visit`).
 - **Inativar, nunca apagar.** Inativar/reativar é idempotente (repetir não grava outro audit).
 - **Auditoria:** `create_doctor`, `update_doctor` (só os campos que mudaram, com antes e depois),
   `inactivate_doctor`, `reactivate_doctor` — `entityType: "doctor"`.
@@ -889,11 +906,13 @@ agenda de visitas que vem depois.
 
 Segundo card do épico CRMLAB-85. A equipe agenda visitas aos médicos do cadastro (§12).
 
-- **Quem mexe:** todos os usuários do laboratório veem e mexem em **todas** as visitas, de
-  qualquer responsável. Não há perfil novo.
+- **Quem mexe (D-329):** **gestor e admin** veem e mexem em **todas** as visitas. O
+  **representante** vê e mexe nas visitas dos médicos **da carteira dele** e nas visitas em que **ele
+  é o responsável** (cobertura de médico de outra carteira); o resto não existe para ele (`404`). Ele
+  só agenda para médico da própria carteira e sempre como responsável. A **atendente não acessa**.
 - **A visita:** médico **ativo** do cadastro, responsável (usuário **ativo** do laboratório,
-  qualquer papel), data/hora prevista, tipo (presencial, online, telefone, evento) e
-  objetivo/pauta (opcional). Data no passado pode (lançar depois).
+  perfil representante, gestor ou admin — D-329), data/hora prevista, tipo (presencial, online,
+  telefone, evento) e objetivo/pauta (opcional). Data no passado pode (lançar depois).
 - **Status:** `agendada → realizada | cancelada | nao_recebeu`. `realizada` vem do check-out
   (§14, CRMLAB-88); fora isso a visita só sai de `agendada` cancelando ou marcando "médico não
   recebeu".
@@ -935,8 +954,9 @@ Terceiro card do épico CRMLAB-85. Registra o que aconteceu na visita da agenda 
 - **Próximo passo:** uma data de retorno. Ela só **sugere** a próxima visita: o botão "Agendar
   retorno" abre uma visita nova já preenchida, e nada é criado sozinho.
 - **Anexos:** imagem e PDF, até 15 MiB cada e 20 por visita, com os mesmos cuidados de mídia do
-  CRMLAB-31 (allow-list, conferência do conteúdo, `nosniff`, `Content-Disposition`). **Qualquer
-  usuário** do laboratório anexa, baixa e **exclui**.
+  CRMLAB-31 (allow-list, conferência do conteúdo, `nosniff`, `Content-Disposition`). **Quem
+  alcança a visita** (§13, D-329: gestor/admin sempre; representante no escopo dele) anexa, baixa e
+  **exclui**.
 - **Relato, próximo passo e anexos** podem ser editados com a visita `agendada` ou `realizada`.
   Visita cancelada ou "não recebeu" fica só para leitura (os anexos ainda baixam).
 - **Auditoria:** `check_in_visit`, `check_out_visit`, `update_visit_report` (só o que mudou),
@@ -954,8 +974,10 @@ interações com ele, com autor e data.
   **Não** puxa as conversas do WhatsApp do CRM: não existe ligação conversa ↔ médico (resposta 8).
 - **Ordem:** do mais novo para o mais antigo, carregando mais sob demanda. A visita entra pela hora
   do check-in (o que aconteceu) ou, sem check-in, pela data prevista.
-- **Quem mexe:** todos os usuários do laboratório veem, lançam, editam e excluem qualquer
-  registro (resposta 2A). Médico inativo também recebe registro: o contato aconteceu.
+- **Quem mexe (D-329):** gestor e admin veem, lançam, editam e excluem qualquer registro; o
+  **representante**, só na ficha de médico **da carteira dele** (a ficha de outro médico é `404`,
+  mesmo que ele tenha feito uma visita de cobertura — essa visita ele vê pela Agenda). A atendente
+  não acessa. Médico inativo também recebe registro: o contato aconteceu.
 - **Registro manual:** tipo, data/hora e descrição são obrigatórios. A data **não pode ficar no
   futuro** (folga de 5 min para o relógio do celular). Descrição até 2000 caracteres.
 - **Excluir apaga de verdade:** o registro some da linha do tempo; o que foi apagado fica no audit

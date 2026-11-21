@@ -207,7 +207,7 @@ CREATE TABLE users (
   email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name VARCHAR(255) NOT NULL,
-  role VARCHAR(50) NOT NULL, -- 'attendant', 'manager', 'admin', 'platform_operator'
+  role VARCHAR(50) NOT NULL, -- 'attendant', 'representative' (072, D-329), 'manager', 'admin', 'platform_operator'
   discount_limit_percent INT DEFAULT 15, -- máximo desconto permitido
   is_active BOOLEAN DEFAULT TRUE,
   last_login_at TIMESTAMP,
@@ -218,7 +218,8 @@ CREATE TABLE users (
   
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   UNIQUE(tenant_id, email),
-  CHECK (role IN ('attendant', 'manager', 'admin', 'platform_operator'))
+  CONSTRAINT users_role_check
+    CHECK (role IN ('attendant', 'representative', 'manager', 'admin', 'platform_operator')) -- 072
 );
 
 CREATE INDEX idx_users_tenant_id ON users(tenant_id);
@@ -2635,6 +2636,22 @@ CREATE INDEX idx_proposals_tenant_doctor_won ON proposals(tenant_id, doctor_id, 
   `requesting_doctor`, só sem homônimo no tenant (ativos e inativos). Testada em
   `tests/db/migration-071-doctor-profile.spec.ts`.
 
+
+### 52. Perfil `representative` em `users.role` (migração 072 — CRMLAB-189, D-329)
+Novo perfil de usuário de laboratório, o **Representante** (visitação médica por carteira).
+
+```sql
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('attendant', 'representative', 'manager', 'admin', 'platform_operator'));
+```
+
+- **Sem backfill e sem mexer em dado:** `doctors.responsible_user_id` e
+  `doctor_visits.responsible_user_id` continuam como estão. Médico sem responsável ou com atendente
+  como responsável aparece no filtro `?unassigned=true` (API_CONTRACTS §13) para o gestor atribuir.
+- A carteira é `doctors.responsible_user_id` (índice `idx_doctors_responsible_user_id`, migração
+  047); o escopo da visita usa também `idx_doctor_visits_responsible_user_id` (048). Nenhum índice
+  novo.
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 

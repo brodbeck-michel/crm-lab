@@ -182,6 +182,11 @@ export interface VisitListCriteria {
   responsibleId?: string;
   status?: VisitStatus;
   purposeId?: string;
+  /**
+   * Escopo do representante (D-329): so visita de medico da carteira dele OU em
+   * que ele e o responsavel. Ausente = sem recorte (gestor/admin).
+   */
+  ownerId?: string;
   /** Quantas linhas buscar (o service pede uma a mais para saber se truncou). */
   limit: number;
 }
@@ -244,6 +249,17 @@ export type AttachmentInsertResult =
 export interface TenantDoctorRef {
   id: string;
   isActive: boolean;
+  /** Dono da carteira (D-329): o representante so agenda para os proprios medicos. */
+  responsibleId: string | null;
+}
+
+/**
+ * Recorte do representante (D-329): medico da carteira dele OU visita em que ele
+ * e o responsavel (cobertura). `n` e a posicao do parametro com o id do usuario;
+ * exige os aliases `v` (doctor_visits) e `d` (doctors).
+ */
+export function visitScopeSql(n: number): string {
+  return `(d.responsible_user_id = $${n} OR v.responsible_user_id = $${n})`;
 }
 
 /** Usuario do laboratorio que pode ser responsavel pela visita. */
@@ -277,6 +293,10 @@ export class VisitRepository {
       params.push(criteria.purposeId);
       where.push(`v.purpose_id = $${params.length}`);
     }
+    if (criteria.ownerId !== undefined) {
+      params.push(criteria.ownerId);
+      where.push(visitScopeSql(params.length));
+    }
     params.push(criteria.limit);
 
     return this.db.withTenant(tenantId, async (tx) => {
@@ -291,8 +311,22 @@ export class VisitRepository {
     });
   }
 
-  async findById(tenantId: string, id: string): Promise<VisitDetail | null> {
-    return this.db.withTenant(tenantId, (tx) => selectDetail(tx, id));
+  /**
+   * `ownerId` (D-329): para o representante a visita so existe se o medico e da
+   * carteira dele ou se ele e o responsavel. Fora do escopo -> `null` (404).
+   */
+  async findById(tenantId: string, id: string, ownerId?: string): Promise<VisitDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      if (ownerId !== undefined) {
+        const visible = await tx.query<{ id: string }>(
+          `SELECT v.id FROM doctor_visits v JOIN doctors d ON d.id = v.doctor_id
+           WHERE v.id = $1 AND ${visitScopeSql(2)}`,
+          [id, ownerId],
+        );
+        if (!visible.rows[0]) return null;
+      }
+      return selectDetail(tx, id);
+    });
   }
 
   /**
@@ -301,12 +335,12 @@ export class VisitRepository {
    */
   async findTenantDoctor(tenantId: string, doctorId: string): Promise<TenantDoctorRef | null> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const result = await tx.query<{ id: string; is_active: boolean }>(
-        'SELECT id, is_active FROM doctors WHERE id = $1 AND tenant_id = $2',
+      const result = await tx.query<{ id: string; is_active: boolean; responsible_user_id: string | null }>(
+        'SELECT id, is_active, responsible_user_id FROM doctors WHERE id = $1 AND tenant_id = $2',
         [doctorId, tenantId],
       );
       const row = result.rows[0];
-      return row ? { id: row.id, isActive: row.is_active } : null;
+      return row ? { id: row.id, isActive: row.is_active, responsibleId: row.responsible_user_id } : null;
     });
   }
 

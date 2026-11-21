@@ -521,7 +521,7 @@ describe('papeis validados no servidor', () => {
     ]) {
       expect(res.status).toBe(403);
       // Papeis de LABORATORIO provam que quem recusou foi `denyPlatformOperator`.
-      expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+      expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
     }
   });
 

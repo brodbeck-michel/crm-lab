@@ -12,8 +12,11 @@ import type {
   ListDoctorSpecialtiesResponse,
   UpdateDoctorInteractionRequest,
   UpdateDoctorSpecialtyRequest,
+  ListDoctorPortfoliosResponse,
   ListDoctorsQuery,
   ListDoctorsResponse,
+  TransferDoctorsRequest,
+  TransferDoctorsResponse,
   UpdateDoctorRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
@@ -21,8 +24,9 @@ import type { QueryParams } from './client';
 
 /**
  * `/doctors` — médicos solicitantes (docs/api/API_CONTRACTS.md §13, CRMLAB-86,
- * D-255). O cadastro do médico vale para qualquer papel do laboratório; a
- * lista de especialidades e o recálculo da curva ABC escrevem só gestor/admin
+ * D-255). Desde D-329: representante (só a carteira dele — o servidor recorta),
+ * gestor e admin; a atendente recebe 403. Carteiras e transferência: gestor/admin.
+ * A lista de especialidades e o recálculo da curva ABC escrevem só gestor/admin
  * (CRMLAB-188, D-328).
  */
 export const doctorsApi = {
@@ -37,6 +41,11 @@ export const doctorsApi = {
   inactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/inactivate`),
 
   reactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/reactivate`),
+
+  // Carteiras e transferência em lote (CRMLAB-189, D-329 — gestor/admin).
+  portfolios: () => http.get<ListDoctorPortfoliosResponse>('/doctors/portfolios'),
+
+  transfer: (body: TransferDoctorsRequest) => http.post<TransferDoctorsResponse>('/doctors/transfer', body),
 
   // Linha do tempo do médico (CRMLAB-89, D-261).
   timeline: (id: string, query: DoctorTimelineQuery = {}) =>

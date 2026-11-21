@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { DOCTOR_ABC_CLASSES, type Doctor, type DoctorAbcClass, type ListDoctorsQuery } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
 import { queryKeys, queryScopes } from '@/api/query-keys';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore } from '@/stores/auth.store';
@@ -13,11 +12,15 @@ import type { DataTableColumn } from '@/components/shared';
 import { Button, Chip, SearchInput, SegmentedControl, Select, useToast } from '@/components/ui';
 import { DoctorModal } from './DoctorModal';
 import { AbcBadge } from './doctor-ui';
+import { useVisitationResponsibles } from './visitation-access';
 
 export { DoctorModal } from './DoctorModal';
 export type { DoctorModalProps } from './DoctorModal';
 
 const PAGE_SIZE = 20;
+
+/** Valor do filtro "Sem responsável / responsável inelegível" (`?unassigned=true`, D-329). */
+export const UNASSIGNED_FILTER = '__unassigned__';
 
 type StatusFilter = 'active' | 'inactive' | 'all';
 
@@ -37,8 +40,10 @@ export function crmLabel(doctor: Pick<Doctor, 'crm' | 'crmUf'>): string {
  * CRMLAB-86, D-255). Primeira tela do grupo "Visitação Médica"; a agenda
  * (`/visitation/agenda`) vem nos próximos cards do épico CRMLAB-85.
  *
- * Todo papel do laboratório vê, cadastra, edita e inativa; só o recálculo da
- * curva ABC é de gestor/admin (CRMLAB-188, D-328). Responsiva: tabela a partir de `md`, cartões abaixo
+ * D-329: representante (só a própria carteira — o servidor recorta), gestor e
+ * admin. O filtro por responsável (com "Sem responsável / inelegível") e o
+ * recálculo da curva ABC (CRMLAB-188, D-328) são só de gestor/admin.
+ * Responsiva: tabela a partir de `md`, cartões abaixo
  * (a `DataTable` rola na horizontal, o que no celular esconde as ações).
  */
 export default function Doctors() {
@@ -61,7 +66,11 @@ export default function Doctors() {
       limit: PAGE_SIZE,
       ...(search.trim().length > 0 ? { search: search.trim() } : {}),
       ...(status !== 'all' ? { active: status === 'active' } : {}),
-      ...(responsibleId ? { responsibleId } : {}),
+      ...(responsibleId === UNASSIGNED_FILTER
+        ? { unassigned: true }
+        : responsibleId
+          ? { responsibleId }
+          : {}),
       ...(specialtyId ? { specialtyId } : {}),
       ...(abcClass ? { abcClass } : {}),
     }),
@@ -73,12 +82,8 @@ export default function Doctors() {
     queryFn: () => doctorsApi.list(filters),
   });
 
-  // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-  });
-  const assignees = assigneesQuery.data?.assignees ?? [];
+  // Responsáveis elegíveis (D-329); para o representante, só ele mesmo.
+  const { seesAll, responsibles: assignees } = useVisitationResponsibles();
 
   const specialtiesQuery = useQuery({
     queryKey: queryKeys.doctorSpecialties(),
@@ -211,20 +216,23 @@ export default function Doctors() {
             }}
           />
         </div>
-        <div className="w-full md:w-64">
-          <Select
-            aria-label="Filtrar por responsável"
-            value={responsibleId}
-            onChange={(event) => {
-              setResponsibleId(event.target.value);
-              setPage(1);
-            }}
-            options={[
-              { value: '', label: 'Todos os responsáveis' },
-              ...assignees.map((a) => ({ value: a.id, label: a.name })),
-            ]}
-          />
-        </div>
+        {seesAll && (
+          <div className="w-full md:w-64">
+            <Select
+              aria-label="Filtrar por responsável"
+              value={responsibleId}
+              onChange={(event) => {
+                setResponsibleId(event.target.value);
+                setPage(1);
+              }}
+              options={[
+                { value: '', label: 'Todos os responsáveis' },
+                { value: UNASSIGNED_FILTER, label: 'Sem responsável / responsável inelegível' },
+                ...assignees.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
+          </div>
+        )}
         <div className="w-full md:w-64">
           <Select
             aria-label="Filtrar por especialidade"

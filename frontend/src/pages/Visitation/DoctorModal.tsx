@@ -26,11 +26,13 @@ import { queryKeys, queryScopes } from '@/api/query-keys';
 import { useApiErrorHandler } from '@/hooks';
 import { useAuthStore } from '@/stores/auth.store';
 import { Modal } from '@/components/shared';
+import { useVisitationResponsibles, type VisitationPerson } from './visitation-access';
 import { Button, Input, Select, TextArea, Toggle, useToast } from '@/components/ui';
 
 export interface DoctorModalProps {
   doctor?: Doctor;
-  assignees: Array<{ id: string; name: string }>;
+  /** Responsáveis elegíveis (`useVisitationResponsibles`, D-329). */
+  assignees: VisitationPerson[];
   onClose: () => void;
 }
 
@@ -158,6 +160,7 @@ function validate(form: DoctorForm): Record<string, string> {
   const errors: Record<string, string> = {};
   if (form.name.trim().length === 0) errors.name = 'Informe o nome';
   if (normalizeCrm(form.crm) !== null && form.crmUf === '') errors.crmUf = 'Informe a UF do CRM';
+  if (!form.responsibleId) errors.responsibleId = 'Escolha o responsável pela carteira';
 
   const birthday = (dayKey: string, yearKey: string, day: string, month: string, year: string) => {
     const d = intOrNull(day);
@@ -277,8 +280,14 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
   const role = useAuthStore((s) => s.user?.role);
   const canManageSpecialties = role === 'manager' || role === 'admin';
   const isEdit = doctor !== undefined;
+  const { seesAll } = useVisitationResponsibles();
 
-  const [form, setForm] = useState<DoctorForm>(() => toForm(doctor));
+  const [form, setForm] = useState<DoctorForm>(() => {
+    const initial = toForm(doctor);
+    // Representante cadastra na própria carteira (D-329): o campo já vem com ele.
+    if (!initial.responsibleId && !seesAll && assignees[0]) initial.responsibleId = assignees[0].id;
+    return initial;
+  });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [newSpecialty, setNewSpecialty] = useState<string | null>(null);
 
@@ -405,12 +414,10 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
 
   // O responsável atual pode ter sido desativado e sumir da lista de ativos:
   // ele continua aparecendo para o formulário não trocar a carteira sozinho.
-  const responsibleOptions = [
-    { value: '', label: 'Sem responsável' },
-    ...assignees.map((a) => ({ value: a.id, label: a.name })),
-  ];
+  // Responsável obrigatório e só perfis elegíveis (D-329): sem "Sem responsável".
+  const responsibleOptions = assignees.map((a) => ({ value: a.id, label: a.name }));
   if (doctor?.responsible && !assignees.some((a) => a.id === doctor.responsible?.id)) {
-    responsibleOptions.push({ value: doctor.responsible.id, label: `${doctor.responsible.name} (inativo)` });
+    responsibleOptions.push({ value: doctor.responsible.id, label: `${doctor.responsible.name} (inativo ou inelegível)` });
   }
 
   const ufOptions = [{ value: '', label: '—' }, ...BRAZIL_UFS.map((uf) => ({ value: uf, label: uf }))];
@@ -505,7 +512,11 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
               label="Responsável pela carteira"
               value={form.responsibleId}
               onChange={(e) => set('responsibleId', e.target.value)}
+              placeholder="Selecione o responsável"
+              // Representante não troca a carteira (D-329): quem transfere é o gestor.
+              disabled={!seesAll}
               options={responsibleOptions}
+              required
               error={fieldErrors.responsibleId}
             />
           </div>

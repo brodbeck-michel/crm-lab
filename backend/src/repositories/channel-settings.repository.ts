@@ -650,7 +650,7 @@ export async function listTeam(tx: DbTx, tenantId: string): Promise<TeamRow[]> {
     `SELECT id, name, role, is_active
        FROM users
       WHERE tenant_id = $1
-        AND role IN ('attendant', 'manager', 'admin')
+        AND role IN ('attendant', 'representative', 'manager', 'admin')
       ORDER BY name ASC, id ASC`,
     [tenantId],
   );

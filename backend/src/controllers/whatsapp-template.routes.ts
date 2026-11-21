@@ -29,7 +29,7 @@ function buildModule(deps: ApiModuleDeps, overrides: { whatsapp?: WhatsAppServic
 
   router.get(
     '/templates',
-    requireRoles('attendant', 'manager', 'admin'),
+    requireRoles('attendant', 'representative', 'manager', 'admin'),
     (req: Request, res: Response, next): void => {
       const { tenantId } = getContext(req);
       whatsapp

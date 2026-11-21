@@ -7463,3 +7463,95 @@ BUSINESS_RULES §13, DESIGN_TOKENS (paleta de finalidade), PAGES §23 + Cadastro
 `backend/src/{controllers,services,repositories}/visit-purpose.*`, `visit.*`,
 `doctor-interaction.repository.ts`; `frontend/src/pages/Settings/VisitPurposes.tsx`,
 `pages/Visitation/*`, `styles/tokens.css`, `tailwind.config.js`, `routes/`.
+
+## 2026-11-21 — Perfil Representante e carteira de médicos (CRMLAB-189, épico CRMLAB-187 Visitação v2)
+
+### D-329: Perfil `representative`, Visitação só para representante/gestor/admin e escopo por carteira
+**Contexto:** no MVP da Visitação (épico CRMLAB-85) qualquer papel do laboratório via e mexia em todos os
+médicos, visitas e registros (D-255 item 3, D-256 item 9, D-261 item 8). Na operação real quem visita é o
+**representante**, cada um com a sua carteira de médicos, e a atendente do WhatsApp não tem o que fazer na
+Visitação.
+**Decisão (escopo aprovado pelo dono do produto no card; itens 2, 8, 9, 10 e 11 decididos na implementação):**
+1. **Perfil novo `representative` ("Representante")** em `UserRole` e no `CHECK` de `users.role`
+   (migração 072, SCHEMA §52). O admin escolhe o perfil no cadastro/edição de usuários. Alçada de desconto
+   padrão **15%**, igual à da atendente (`DEFAULT_DISCOUNT_LIMIT`).
+2. **Fora da Visitação o representante é uma atendente.** Decidido item a item:
+   - Atendimento (WhatsApp), Contatos, Chat interno, Respostas rápidas, Exames (escrita do catálogo),
+     Regras (só leitura), feriados e templates da Meta: **igual à atendente**.
+   - Propostas: vê só as **próprias** (+ fila comum do Bitlab sem responsável), como a atendente (D-042,
+     D-195); repassar o cartão só para outro perfil de linha de frente (atendente ou representante).
+   - Regras do funil (`RuleActorRole`): o representante conta como **atendente** — não existe linha nova
+     na tela de Regras (`ruleActorRoleOf`).
+   - Vendas e Conversão: recorte **próprio**, como a atendente (D-112).
+   - Decisões, Resultados, Busca Ativa, Gestão da Operação, Canais & Equipe, Convênios, Atendentes,
+     Integração LIS, Usuários, Personalização: **fora**, como a atendente.
+   - Equipe (Canais & Equipe, Gestão da Operação, lista de responsáveis de conversa e proposta): o
+     representante **aparece**, como a atendente — ele pode atender conversa e ter proposta.
+   - **Tela inicial:** `/visitation/agenda` (a atendente continua em `/attendance`). É a única diferença
+     de navegação fora das permissões da Visitação.
+   - Helper único em `shared/types/auth.types.ts`: `isFrontlineRole(role)` (atendente **ou**
+     representante) substitui as comparações `role === 'attendant'` que significavam "linha de frente".
+3. **Atendente perde a Visitação inteira:** some do menu, as rotas do frontend redirecionam, e o backend
+   responde **`403 FORBIDDEN`** (`requiredRoles: ["representative","manager","admin"]`) em **todas** as rotas
+   de `/doctors` e `/visits` (médicos, visitas, registro, anexos, linha do tempo, interações, carteiras,
+   transferência). É recusa **por perfil**, por isso 403 e não 404.
+4. **Escopo do representante (backend, em todas as rotas da Visitação):**
+   - **Médico:** só os da **carteira** dele (`doctors.responsible_user_id = ele`). Fora disso → `404
+     NOT_FOUND` (lista, detalhe, edição, inativar/reativar, linha do tempo e registros manuais).
+   - **Visita:** a do médico da carteira dele **ou** em que ele é o **responsável pela visita**
+     (cobertura). Fora disso → `404 NOT_FOUND` (lista, detalhe, edição, reagendar, cancelar, não recebeu,
+     check-in/out, relato, anexos — inclusive o download).
+   - **Linha do tempo e registros manuais:** só de médico da carteira. A visita de cobertura (médico de
+     outra carteira) aparece para ele na **Agenda** e abre o detalhe/registro, mas a **ficha** daquele
+     médico continua `404` — a ficha é da carteira, não da visita.
+   - **Criar médico:** sempre na própria carteira. `responsibleId` ausente → ele mesmo; outro usuário →
+     `VALIDATION_ERROR` em `responsibleId`. Editar não troca a carteira (só para ele mesmo); quem move
+     carteira é o gestor (item 8).
+   - **Criar visita:** médico da **própria carteira** e `responsibleId` = ele mesmo. Médico de outra
+     carteira → `VALIDATION_ERROR` em `doctorId` (mesma mensagem do médico inexistente: não vira oráculo);
+     outro responsável → `VALIDATION_ERROR` em `responsibleId`. Na edição valem as mesmas regras quando o
+     médico ou o responsável **muda**.
+   - **Gestor e admin** veem e alteram tudo do laboratório.
+5. **Responsável elegível = `representative`, `manager` ou `admin`** (`VISITATION_RESPONSIBLE_ROLES`), ativo
+   e do mesmo laboratório — para médico e para visita. Atendente deixa de ser elegível.
+6. **Médico passa a ter responsável obrigatório:** `POST /doctors` sem responsável (gestor/admin) →
+   `VALIDATION_ERROR`; `PATCH /doctors/:id` que muda algo e deixa o médico sem responsável, ou com
+   responsável de perfil inelegível, → `VALIDATION_ERROR` em `responsibleId`. **Responsável inativo e
+   inalterado continua tolerado** (D-255 item 9 segue valendo para quem foi desativado). A migração **não
+   mexe em dado**: médicos sem responsável ou com atendente como responsável continuam como estão e
+   aparecem no filtro **"Sem responsável / responsável inelegível"** (`GET /doctors?unassigned=true`:
+   responsável nulo, de perfil inelegível ou inativo), que só a tela do gestor/admin oferece. Para o
+   representante o filtro é combinado com a carteira dele e devolve vazio.
+7. **Carteiras (gestor/admin):** `GET /doctors/portfolios` devolve, por responsável, o total de médicos
+   (e quantos ativos). Linhas = todo representante **ativo** (mesmo com zero médicos) + todo usuário
+   ativo de perfil elegível com ao menos um médico. O resto (sem responsável, perfil inelegível ou
+   inativo) vai para o balde `unassigned` — cada médico é contado **uma vez**. O corte **A/B/C**
+   (`abc`) é **opcional no shape** e só passa a vir quando o campo de classificação do médico
+   (CRMLAB-188) for integrado; até lá a chave não vem. Tela `/visitation/portfolios`, no grupo
+   Visitação, só gestor/admin.
+8. **Transferência em lote (gestor/admin):** `POST /doctors/transfer` com `doctorIds` (1–200),
+   `toUserId` (elegível e ativo) e `includeFutureVisits` (default `false`). Tudo ou nada, numa transação
+   com os médicos travados (`FOR UPDATE`). Médico de outro tenant ou inexistente → `404` (nada muda).
+   Médico que já é do destino é ignorado (sem audit). Com `includeFutureVisits`, levam junto as visitas
+   **`agendada`** com data **no futuro** desses médicos **cujo responsável era o responsável anterior do
+   médico** — cobertura combinada com outra pessoa não é desfeita. Serve também para atribuir os médicos
+   "sem responsável" (mesma rota).
+9. **Auditoria da transferência:** um `transfer_doctor` por médico (`entityType: "doctor"`,
+   `oldValues.responsibleId` → `newValues.responsibleId` + `movedVisitIds`) e um `transfer_visit` por
+   visita levada (`entityType: "visit"`, responsável antigo → novo).
+10. **Agenda:** o representante vê só o escopo dele (o servidor recorta); o filtro por responsável só
+    aparece para gestor/admin. Os seletores de responsável (médico e visita) listam só perfis elegíveis;
+    para o representante o seletor mostra só ele mesmo.
+11. **Seeds de dev:** dois representantes no Lab Vida (`carla@labvida.com.br`, `diego@labvida.com.br`),
+    cada um com médicos na carteira.
+**Revoga:** D-255 item 3 ("sem perfil novo: todo papel vê, cadastra, edita e inativa") e o "qualquer papel"
+do item 5; D-256 item 9 ("todos veem e mexem em todas as visitas") e o "qualquer usuário ativo" do item 1;
+D-261 item 8 ("todo papel vê, lança, edita e exclui qualquer registro"). D-258 item 8 ("qualquer usuário
+exclui anexo") passa a valer dentro do escopo acima.
+**Impacto:** `backend/migrations/072_representative_role.sql`; `shared/types/auth.types.ts`
+(`representative`, `isFrontlineRole`, `VISITATION_ROLES`, `VISITATION_RESPONSIBLE_ROLES`, `USER_ROLE_LABELS`),
+`doctor.types.ts` (`unassigned`, `DoctorPortfolio`, `TransferDoctors*`), `funnel-rules.types.ts`
+(`ruleActorRoleOf`); `doctor.*`, `visit.*`, `doctor-interaction.*` (escopo), `user.routes.ts`, os serviços
+que enumeravam papéis; frontend `route-config.ts`, `Sidebar`, `pages/Visitation/*` (`Portfolios.tsx` novo),
+gestão de usuários; seeds. SCHEMA §52, API_CONTRACTS §1/§13/§14, BUSINESS_RULES §12–§15, SECURITY
+"Autorização", PAGES §22–§23 e §22c.

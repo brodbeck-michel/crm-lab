@@ -220,7 +220,7 @@ describe('o operador NAO acessa dado de laboratorio', () => {
 
     for (const res of respostas) {
       expect(res.status).toBe(403);
-      expect(detailsOf(res).requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+      expect(detailsOf(res).requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
     }
   });
 
@@ -255,7 +255,7 @@ describe('o operador NAO acessa dado de laboratorio', () => {
     for (const res of responses) {
       expect(res.status).toBe(403);
       expect(errorOf(res).code).toBe('FORBIDDEN');
-      expect(detailsOf(res).requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+      expect(detailsOf(res).requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
     }
   });
 });

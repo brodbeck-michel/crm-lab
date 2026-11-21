@@ -230,6 +230,8 @@ export const queryKeys = {
   doctorSpecialties: (active?: boolean) => ['doctors', 'specialties', active ?? 'all'] as const,
   /** ['doctors', 'picker', term] — busca do médico no formulário da proposta (CRMLAB-188) */
   doctorPicker: (term: string) => ['doctors', 'picker', term] as const,
+  /** ['doctors', 'portfolios'] — Carteiras (§22c, CRMLAB-189); cai junto com o escopo `doctors` */
+  doctorPortfolios: () => ['doctors', 'portfolios'] as const,
   /** ['visits', filters] — `/visitation/agenda` (§23, CRMLAB-87) */
   visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
   /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */

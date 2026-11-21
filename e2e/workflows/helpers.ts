@@ -81,6 +81,7 @@ export const API_URL = process.env.E2E_API_URL ?? 'http://localhost:3000/api/v1'
 /** Home por papel — espelha `frontend/src/routes/route-config.ts` (`ROLE_HOME`). */
 export const HOME_BY_ROLE: Readonly<Record<UserRole, string>> = {
   attendant: '/attendance',
+  representative: '/visitation/agenda',
   manager: '/proposals',
   admin: '/proposals',
   platform_operator: '/platform/tenants',

@@ -13,6 +13,7 @@
  * formulário e o servidor nunca discordem sobre o que é "o mesmo CRM".
  */
 import type { IsoDate, IsoDateTime, PaginationMeta, PaginationQuery } from './api.types.js';
+import type { TenantRole } from './auth.types.js';
 
 /** As 27 unidades da federação — UF do conselho regional (CRM-UF). */
 export const BRAZIL_UFS = [
@@ -357,11 +358,68 @@ export interface ListDoctorsQuery extends PaginationQuery {
   specialtyId?: string;
   /** Só desta classe da curva ABC (CRMLAB-188). */
   abcClass?: DoctorAbcClass;
+  /**
+   * D-329: só os médicos sem responsável, com responsável de perfil inelegível
+   * (fora de `VISITATION_RESPONSIBLE_ROLES`) ou inativo — o filtro de atribuição
+   * do gestor. Para o representante, combinado com a carteira, vem vazio.
+   */
+  unassigned?: boolean;
 }
 
 export interface ListDoctorsResponse {
   doctors: Doctor[];
   pagination: PaginationMeta;
+}
+
+// --- Carteiras e transferência (CRMLAB-189, D-329) ---
+
+/** Corte pela classificação ABC do médico — entra quando o CRMLAB-188 for integrado. */
+export interface DoctorPortfolioAbc {
+  A: number;
+  B: number;
+  C: number;
+  unclassified: number;
+}
+
+export interface DoctorPortfolioCounts {
+  /** Ativos e inativos. */
+  doctorCount: number;
+  activeDoctorCount: number;
+  /** Opcional: só vem quando houver classificação ABC no médico (CRMLAB-188). */
+  abc?: DoctorPortfolioAbc;
+}
+
+/** Uma carteira: o responsável e quantos médicos ele tem. */
+export interface DoctorPortfolio extends DoctorPortfolioCounts {
+  responsible: { id: string; name: string; role: TenantRole };
+}
+
+/**
+ * `GET /doctors/portfolios` (gestor/admin). Linhas = representantes ativos (mesmo
+ * com zero médicos) + usuários ativos de perfil elegível com médico. O resto vai
+ * para `unassigned` — cada médico conta uma vez.
+ */
+export interface ListDoctorPortfoliosResponse {
+  portfolios: DoctorPortfolio[];
+  unassigned: DoctorPortfolioCounts;
+}
+
+/** Teto de médicos por transferência. */
+export const DOCTOR_TRANSFER_MAX = 200;
+
+/** `POST /doctors/transfer` (gestor/admin). */
+export interface TransferDoctorsRequest {
+  /** 1..`DOCTOR_TRANSFER_MAX`, sem repetição. */
+  doctorIds: string[];
+  /** Usuário ativo, de perfil elegível, do mesmo laboratório. */
+  toUserId: string;
+  /** Leva as visitas `agendada` futuras que estavam com o responsável anterior. Default `false`. */
+  includeFutureVisits?: boolean;
+}
+
+export interface TransferDoctorsResponse {
+  transferredDoctors: number;
+  movedVisits: number;
 }
 
 /**

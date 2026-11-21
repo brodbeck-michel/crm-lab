@@ -870,6 +870,17 @@ Segundo card do épico CRMLAB-85. A equipe agenda visitas aos médicos do cadast
   (`409 VISIT_ALREADY_CLOSED`).
 - **Médico ou responsável inativado depois** não trava a visita: ela continua editável; a checagem
   só roda quando o médico/responsável **muda**.
+- **Finalidade (CRMLAB-190, D-330):** toda visita tem uma **finalidade** (para quê), separada do
+  tipo/modo (como). As finalidades são **cadastro do laboratório**: nome único, cor de uma paleta
+  fixa de 8, ativa/inativa e ordem; **só gestor e admin** criam e editam, sem excluir (inativa).
+  Todo laboratório nasce com Visita, Solicitação de patrocínio, Solicitação de material, Acesso a
+  exames e Compromisso interno; as visitas de antes do CRMLAB-190 ficaram como **Visita**.
+  - Obrigatória ao agendar; trocável enquanto a visita está `agendada`.
+  - Só finalidade **ativa** entra em visita nova ou numa troca. Inativar não mexe nas visitas que
+    já a usam: continuam com ela, exibida, e editáveis nos outros campos.
+  - Na agenda, **a cor do bloco é a da finalidade**; o status aparece por ícone e texto (e nome
+    riscado em cancelada/não recebeu), nunca só por cor.
+  - Auditoria: `create_visit_purpose`, `update_visit_purpose` (`entityType: "visit_purpose"`).
 - **Auditoria:** `create_visit`, `update_visit` (só o que mudou), `reschedule_visit`,
   `cancel_visit`, `visit_not_received` — `entityType: "visit"`.
 

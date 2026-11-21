@@ -4283,3 +4283,14 @@ Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e 
 (`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
 `tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
 guards e client (+9).
+
+### 🔄 CRMLAB-190 — Finalidade da visita: cadastro por laboratório, cor na agenda e filtro (2026-11-21, em andamento)
+
+Branch `feature/CRMLAB-190-finalidade-visita` (a partir da integração do épico `feature/CRMLAB-187-visitacao-v2`),
+D-330 (revê a D-262 item 6). Migração `073_visit_purposes.sql` (070/071 = CRMLAB-188, 072 = CRMLAB-189).
+Cadastro `visit_purposes` por tenant (nome, cor da paleta fixa de 8 tokens `--color-purpose-*`, ativo,
+ordem), com as 5 finalidades padrão semeadas nos tenants existentes e, pelo trigger em `tenants`, nos
+novos. `doctor_visits.purpose_id` obrigatório (as visitas antigas viraram "Visita"); `Visit.purpose`
+`{ id, name, color }` na agenda e na linha do tempo do médico. Rotas `/settings/visit-purposes`
+(leitura todos, escrita gestor+); `GET /visits?purposeId=`. Agenda: cor do bloco/linha/cartão pela
+finalidade, status por ícone + texto, filtro de finalidade em chips. Tela "Finalidades" em Cadastros.

@@ -31,6 +31,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /settings/operation           → Gestão da Operação        (gestor+)
 /settings/insurances          → Convênios                 (gestor+)
 /settings/attendants          → Atendentes (LIS)           (gestor+)
+/settings/visit-purposes      → Finalidades de visita     (gestor+; aba de Cadastros — CRMLAB-190)
 /settings/rules               → Regras                    (todos veem; gestor/admin editam — CRMLAB-56)
 /settings/commissions         → redireciona para /settings/rules#comissoes (CRMLAB-56)
 /settings/lis-integration     → Integração LIS            (gestor lê e sincroniza; admin edita — CRMLAB-52)
@@ -58,9 +59,10 @@ Ativa, Gestão da Operação; fechado, o cabeçalho dele mostra a soma das decis
 cinco telas, mostradas como abas (`SegmentedControl` `size="md"`, sem esticar) **acima do título
 da tela, dentro do contêiner dela** (`PageTabsContext` → `PageHeader`/`PageTabs`), nesta ordem: Usuários
 (`/settings/users`), Exames (`/catalog`), Respostas rápidas (`/quick-replies`), Atendentes
-(`/settings/attendants`) e Convênios (`/settings/insurances`). Cada aba é a tela que já existia,
+(`/settings/attendants`), Convênios (`/settings/insurances`) e **Finalidades**
+(`/settings/visit-purposes`, CRMLAB-190 — finalidades da visita médica). Cada aba é a tela que já existia,
 **no mesmo endereço** e com os mesmos `requiredRoles` — o perfil só vê as abas que pode abrir
-(atendente: Exames e Respostas rápidas; gestor: + Atendentes e Convênios; admin: todas).
+(atendente: Exames e Respostas rápidas; gestor: + Atendentes, Convênios e Finalidades; admin: todas).
 `/settings/registers` redireciona para a primeira aba visível. O item "Cadastros" fica ativo no
 trilho em qualquer uma das abas (`activePaths`).
 
@@ -97,6 +99,7 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 | `/settings/operation` | manager · admin | sim | Gestão |
 | `/settings/insurances` (aba de Cadastros) | manager · admin | não (aba) | — |
 | `/settings/attendants` (aba de Cadastros) | manager · admin | não (aba) | — |
+| `/settings/visit-purposes` (aba "Finalidades" de Cadastros, CRMLAB-190) | manager · admin | não (aba) | — |
 | `/settings/rules` (CRMLAB-56) | attendant · manager · admin | sim | Configurações |
 | `/settings/commissions` → redirect `/settings/rules#comissoes` | manager · admin | não | — |
 | `/settings/lis-integration` (CRMLAB-52) | manager · admin | sim | Configurações |
@@ -1096,6 +1099,18 @@ Seção própria logo depois de "Conexão de canal", **só quando o WhatsApp est
   desabilitar porque não existe nenhum — o servidor recusaria o `POST`/`PATCH` de qualquer
   forma (403)
 
+### Finalidades de visita (`/settings/visit-purposes`) — gestor+ (CRMLAB-190, D-330)
+Aba "Finalidades" de Cadastros. Arquivo `pages/Settings/VisitPurposes.tsx`.
+- Dados: `GET /settings/visit-purposes` · `POST` e `PATCH /settings/visit-purposes/:id`
+  (API_CONTRACTS.md §14, "Finalidades da visita")
+- Lista na ordem do cadastro: amostra da cor (bloco na cor da finalidade com o nome, como sai na
+  agenda), status (Ativa/Inativa), [↑] [↓] para mudar a ordem (troca o `sortOrder` com a vizinha)
+  e [Editar]
+- Criar/editar (`Modal`): Nome* e **Cor** — grade de 8 amostras da paleta (`radiogroup`, cada
+  amostra com o rótulo da cor no `aria-label` e o nome digitado de exemplo); `Toggle` "Ativa" só
+  na edição. Nome repetido → erro no campo (`fields.name`)
+- **Sem excluir:** inativar tira a finalidade das visitas novas; as que já a usam continuam com ela
+
 ### Usuários & Permissões (`/settings/users`) — admin
 - Tabela de usuários: nome, email, papel, limite de desconto, status
 - Criar/editar (modal): papel + limite desconto
@@ -1816,8 +1831,10 @@ Item **"Agenda"** (ícone `CalendarDays`) do grupo "Visitação Médica", antes 
 `GET /doctors?active=true&limit=100&sortBy=name`; responsáveis de `GET /conversations/assignees`.
 Arquivos em `pages/Visitation/`: `Agenda.tsx` (página, filtros e modais), `AgendaWeek.tsx`
 (grade), `AgendaList.tsx`, `AgendaRail.tsx` (coluna de resumo), `AgendaMobile.tsx`,
-`agenda-ui.tsx` (cores de status, selo, avatar, lanes) e `agenda-dates.ts` (datas no fuso do
-navegador; o fio é ISO UTC). Cores: `--color-agenda-*` e `--color-visit-*` (DESIGN_TOKENS.md).
+`agenda-ui.tsx` (cores de finalidade e de status, selo/ícone de status, avatar, lanes) e
+`agenda-dates.ts` (datas no fuso do navegador; o fio é ISO UTC). Cores: `--color-agenda-*`,
+`--color-purpose-*` (blocos, CRMLAB-190) e `--color-visit-*` (status) — DESIGN_TOKENS.md.
+Finalidades de `GET /settings/visit-purposes` (todas; a tela filtra as ativas onde precisa).
 
 Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de **1280px**, a
 **coluna de resumo** de 280px à direita. Abaixo de 1280px a coluna some e clicar numa visita abre o
@@ -1833,21 +1850,27 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
 - **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana") +
   período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026"); à direita, o seletor Semana | Lista.
 - **Filtros:** chips de status (são filtro e legenda: ponto + rótulo + contagem da semana inteira;
-  todos ligados; clicar desliga), chips de responsável (avatar + primeiro nome, seleção única; com
+  todos ligados; clicar desliga), chips de **finalidade** (CRMLAB-190, D-330: mesma mecânica —
+  ponto na cor da finalidade + nome + contagem da semana; multisseleção, todos ligados, clicar
+  desliga; aparecem as ativas e as inativas que têm visita na semana), chips de responsável (avatar + primeiro nome, seleção única; com
   mais de 6 usuários vira seletor) e o seletor "Médico: Todos".
 - **Semana:** grade 07h–20h × seg–dom, 1 hora = 64px, rótulo da hora na linha. Cabeçalho do dia
   fixo ao rolar (número em círculo, dia da semana, "3 visitas"/"sem visitas"); sáb/dom com fundo
   levemente cinza; **hoje** com o número no círculo da cor do tema, coluna tingida e a **linha do
   agora** (vermelha, atualiza a cada minuto). A visita não tem duração prevista: o **bloco ocupa
-  1 hora** a partir do início (horário · médico · avatar + especialidade), na cor do status;
-  cancelada e "não recebeu" com o nome riscado. Visitas a menos de 1 h uma da outra viram **lanes**
+  1 hora** a partir do início, **na cor da finalidade** (CRMLAB-190, D-330 — revê a D-262):
+  linha 1 "HH:MM Médico" com o **ícone de status** à esquerda (relógio = agendada, ✓ = realizada,
+  ✕ = cancelada, ⊘ = não recebeu; o nome do status vai no `aria-label`/`title`), linha 2 o nome da
+  finalidade. Cancelada e "não recebeu": nome riscado e bloco com opacidade reduzida. Visitas a menos de 1 h uma da outra viram **lanes**
   que recuam 28% (sem dividir a coluna). Clicar no vazio abre "Nova visita" na hora ou meia hora
   clicada; o "+" escondido de cada hora faz o mesmo pelo teclado. Semana vazia: cartão "Nenhuma
   visita nesta semana" sobre a grade (com filtros: "Nenhuma visita com esses filtros" + [Limpar
   filtros]). Carregando: esqueleto.
 - **Lista:** a mesma semana; cabeçalho do dia fixo ("Quinta, 01 de out." + contagem); linha em
-  colunas Horário · Médico (+ especialidade) · Local (clínica do médico ou, sem ela, o tipo da
-  visita) · Responsável (avatar + nome) · selo do status.
+  colunas Horário · Médico (+ finalidade, com o ponto na cor dela) · Local (clínica do médico ou,
+  sem ela, o tipo da visita) · Responsável (avatar + nome) · selo do status. A linha tem uma
+  **faixa à esquerda na cor da finalidade**; cancelada/não recebeu com o nome riscado e opacidade
+  reduzida.
 - **Coluna de resumo (≥ 1280px):** "Resumo da semana" (total + barra de distribuição por status,
   sem filtros) e, embaixo, **"Hoje"** (as visitas de hoje com os filtros; se a semana na tela não é
   a atual, o dia é buscado à parte) ou, com uma visita selecionada, **"Detalhes da visita"**:
@@ -1861,12 +1884,16 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
 - **Celular (< `md`):** cabeçalho "Agenda" + mês(es), botão de filtros (abre `Modal` com os mesmos
   filtros e um contador dos ativos) e [+]; faixa da semana com ‹ › e os 7 dias (ponto = tem
   visita; hoje tingido; o selecionado na cor do tema); título do dia + contagem; lista do dia em
-  cartões na cor do status. Tocar abre o `Modal` "Visita".
-- **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado), Tipo,
+  cartões **na cor da finalidade** (ícone + rótulo do status no topo, nome do médico, finalidade,
+  especialidade · local, responsável; cancelada/não recebeu riscado e com opacidade). Tocar abre
+  o `Modal` "Visita".
+- **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado),
+  **Finalidade*** (CRMLAB-190: só as ativas; a atual inativa aparece como "Nome (inativa)"; abre
+  vazia ao criar, e o "Agendar retorno" traz a da visita anterior se ainda ativa), Tipo (modo),
   Data* e Hora* (só ao criar), Objetivo/pauta. Médico/responsável inativo da visita aparece como
   "Nome (inativo)". `VALIDATION_ERROR` com `fields` marca o campo.
 - **Visita aberta** (`Modal` "Visita"): médico (CRM, especialidade), selo do status, data/hora,
-  tipo, responsável, quem agendou, pauta, motivo do encerramento (com quem e quando) e o
+  finalidade (ponto na cor + nome), tipo, responsável, quem agendou, pauta, motivo do encerramento (com quem e quando) e o
   **histórico de datas**. Enquanto `agendada`: [Médico não recebeu] [Cancelar visita] [Reagendar]
   [Editar]. Encerrada: só leitura.
 - **Reagendar:** nova data e hora + motivo opcional. **Cancelar / Médico não recebeu:** motivo

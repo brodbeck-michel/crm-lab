@@ -1950,6 +1950,27 @@ depois o arquivo (arquivo ausente não é erro). Audit `check_in_visit`, `check_
 Lê `doctors` e `users` (só o do próprio tenant, com `tenant_id` explícito além do RLS) para validar
 e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro domínio.
 
+**Finalidade da visita (CRMLAB-190 — D-330).** `create` exige `purposeId` de finalidade **ativa**
+do tenant (`VisitPurposeRepository.findById`, com `tenant_id` explícito); `update` só revalida
+quando a finalidade **muda**. O `JOIN visit_purposes` devolve `purpose: { id, name, color }` em
+toda leitura; `list` aceita `purposeId`. `purposeId` entra no diff do audit.
+
+**VisitPurposeService** (`services/visit-purpose.service.ts`) — dono de `visit_purposes`
+(SCHEMA.md §36a), rotas `/settings/visit-purposes` (API_CONTRACTS.md §14, "Finalidades da
+visita"). Leitura para todo papel de tenant; escrita só `manager`/`admin` (na rota e no service).
+Nome único no tenant (sem diferenciar maiúscula) → `VALIDATION_ERROR` em `fields.name`; cor só da
+paleta (`isVisitPurposeColor`). A semente dos laboratórios novos é do banco (trigger em
+`tenants`), não do service. Audit `create_visit_purpose`, `update_visit_purpose` (só o diff).
+
+```typescript
+// backend/src/services/visit-purpose.service.ts
+export interface VisitPurposeService {
+  list(ctx: TenantContext): Promise<ListVisitPurposesResponse>;
+  create(ctx: TenantContext, dto: CreateVisitPurposeRequest): Promise<VisitPurpose>;             // FORBIDDEN, VALIDATION_ERROR
+  update(ctx: TenantContext, id: string, dto: UpdateVisitPurposeRequest): Promise<VisitPurpose>; // NOT_FOUND
+}
+```
+
 ---
 
 ## 32. DoctorInteractionService — linha do tempo do médico (CRMLAB-89 — D-261)

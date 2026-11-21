@@ -6365,6 +6365,7 @@ Médico de outro tenant, inexistente, ou registro de **outro médico** no caminh
       "occurredAt": "2026-10-06T13:20:00.000Z",
       "status": "realizada",
       "type": "presencial",
+      "purpose": { "id": "5b9f…", "name": "Visita", "color": "azul" },
       "scheduledAt": "2026-10-06T13:00:00.000Z",
       "checkInAt": "2026-10-06T13:20:00.000Z",
       "checkOutAt": "2026-10-06T13:55:00.000Z",
@@ -6381,6 +6382,7 @@ Médico de outro tenant, inexistente, ou registro de **outro médico** no caminh
 - Junta as **visitas do médico** (qualquer status) e os **registros manuais**, do mais novo para o
   mais antigo, com o `id` como desempate. **Não** traz conversas do WhatsApp do CRM (resposta 8 do
   épico).
+- `purpose` é a finalidade da visita (CRMLAB-190, D-330), o mesmo `{ id, name, color }` de `Visit`.
 - A posição da visita (`occurredAt`) é o **check-in**, ou a data prevista se não houve check-in.
   Visita agendada no futuro aparece no topo.
 - `reportExcerpt`: o primeiro campo preenchido do relato (apresentado → feedback → objeções),
@@ -6430,7 +6432,8 @@ Tela `/visitation/agenda` (PAGES.md §23). Módulo `/visits`; shapes em
 Regras em BUSINESS_RULES §13 e D-256.
 
 **Papéis:** as **13 rotas** (7 da D-256 + 6 do registro, D-258) valem para **todos os papéis do tenant** (resposta 2A do épico: todos
-veem e mexem em todas as visitas). `platform_operator` → `403`. Entram no inventário de isolamento
+veem e mexem em todas as visitas). As finalidades (`/settings/visit-purposes`, CRMLAB-190, fim
+desta seção) são lidas por todos e escritas só por gestor/admin. `platform_operator` → `403`. Entram no inventário de isolamento
 (`route-tenant-isolation.spec.ts`): visita de outro tenant → `404 NOT_FOUND`.
 
 Não existe `DELETE`: visita se cancela. Datas sempre ISO 8601 **com fuso** (`Z` ou `-03:00`).
@@ -6447,7 +6450,9 @@ interface Visit {
             isActive: boolean };
   responsible: { id: string; name: string } | null;   // null só se o usuário foi apagado
   scheduledAt: string;                                // ISO UTC — reagendar muda este campo
-  type: VisitType;
+  type: VisitType;                                    // modo: como o contato acontece
+  purpose: { id: string; name: string;                // finalidade: para quê (CRMLAB-190, D-330)
+             color: VisitPurposeColor };              // CHAVE da paleta, nunca hex
   agenda: string | null;                              // objetivo/pauta
   status: VisitStatus;
   statusReason: string | null;                        // motivo de cancelada / nao_recebeu
@@ -6469,7 +6474,8 @@ interface VisitDetail extends Visit {
 
 ### GET /visits
 **Query:** `from`, `to` (**obrigatórios**, período `[from, to)`, `to > from`, no máximo **62 dias**);
-`doctorId?`, `responsibleId?`, `status?` (um dos 4).
+`doctorId?`, `responsibleId?`, `status?` (um dos 4), `purposeId?` (uma finalidade — CRMLAB-190;
+a Agenda filtra várias na tela).
 
 **Response (200):**
 ```json
@@ -6491,21 +6497,24 @@ inválido), `FORBIDDEN` (403, `platform_operator`)
   "responsibleId": "uuid",
   "scheduledAt": "2026-10-06T10:00:00-03:00",
   "type": "presencial",
+  "purposeId": "uuid",
   "agenda": "Apresentar o painel de check-up"
 }
 ```
+`purposeId` **obrigatório** (CRMLAB-190): finalidade **ativa** do laboratório.
 `agenda` opcional (até 2000; vazio vira `null`). Nasce `agendada`. Data no passado é aceita.
 
 **Response (201):** `VisitDetail`. Audit `create_visit`.
 
 **Erros:** `VALIDATION_ERROR` (400 — campo ausente, tipo fora da lista, campo desconhecido,
 data sem fuso; `fields.doctorId` para médico inexistente/inativo/de outro tenant;
-`fields.responsibleId` para usuário inexistente/inativo/de outro tenant)
+`fields.responsibleId` para usuário inexistente/inativo/de outro tenant; `fields.purposeId` para
+finalidade inexistente/inativa/de outro tenant)
 
 ### PATCH /visits/:id
-Parcial: `doctorId?`, `responsibleId?`, `type?`, `agenda?` (`null` limpa). **A data não muda
-aqui** (`scheduledAt` → 400; use `/reschedule`). Médico e responsável só são revalidados quando
-mudam. Sem mudança real → 200 sem audit.
+Parcial: `doctorId?`, `responsibleId?`, `type?`, `purposeId?`, `agenda?` (`null` limpa). **A data
+não muda aqui** (`scheduledAt` → 400; use `/reschedule`). Médico, responsável e finalidade só são
+revalidados quando mudam (a visita com finalidade já inativada continua editável sem trocá-la). Sem mudança real → 200 sem audit.
 
 **Response (200):** `VisitDetail`. Audit `update_visit` (só o diff).
 
@@ -6646,6 +6655,49 @@ Qualquer usuário do laboratório exclui (resposta 7 do épico). Apaga a linha e
 mimeType, byteSize }`).
 
 **Erros:** `VISIT_ALREADY_CLOSED` (409), `NOT_FOUND`
+
+### Finalidades da visita — `/settings/visit-purposes` (CRMLAB-190, D-330)
+
+Cadastro por laboratório; shapes em `shared/types/visit-purpose.types.ts`; tabela `visit_purposes`
+(SCHEMA.md §36a). Todo laboratório nasce com 5 (Visita, Solicitação de patrocínio, Solicitação de
+material, Acesso a exames, Compromisso interno). Sem `DELETE`: inativa.
+
+```typescript
+type VisitPurposeColor =
+  'azul' | 'verde' | 'agua' | 'violeta' | 'ambar' | 'rosa' | 'terracota' | 'cinza';
+
+interface VisitPurpose {
+  id: string;
+  name: string;              // até 60, único no laboratório (sem diferenciar maiúscula)
+  color: VisitPurposeColor;  // chave da paleta — o front pinta com --color-purpose-<chave>-*
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+#### GET /settings/visit-purposes
+Todos os papéis do tenant (`platform_operator` → 403). **Todas**, ativas e inativas, por
+`sortOrder` e nome. A tela decide o que oferecer (nova visita: só ativas + a atual).
+
+**Response (200):** `{ "purposes": VisitPurpose[] }`
+
+#### POST /settings/visit-purposes (manager/admin)
+```json
+{ "name": "Treinamento", "color": "ambar" }
+```
+Nasce ativa, no fim da ordem (`sortOrder` = maior + 1). **Response (201):** `VisitPurpose`.
+Audit `create_visit_purpose`.
+
+**Erros:** `VALIDATION_ERROR` (400 — nome vazio/longo, cor fora da paleta, campo desconhecido;
+`fields.name` para nome repetido no laboratório), `FORBIDDEN` (403, atendente)
+
+#### PATCH /settings/visit-purposes/:id (manager/admin)
+Parcial: `name?`, `color?`, `isActive?`, `sortOrder?` (inteiro ≥ 0). Sem mudança real → 200 sem
+audit. **Response (200):** `VisitPurpose`. Audit `update_visit_purpose` (só o diff).
+
+**Erros:** `NOT_FOUND` (404, inexistente ou de outro tenant), `VALIDATION_ERROR`, `FORBIDDEN`
 
 ---
 

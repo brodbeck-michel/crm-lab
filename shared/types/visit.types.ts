@@ -9,6 +9,7 @@
  */
 import type { IsoDateTime } from './api.types.js';
 import { isAllowedMediaMimeType, mediaCategoryOf } from './media.types.js';
+import type { VisitPurposeRef } from './visit-purpose.types.js';
 
 /** Tipo da visita (como o contato acontece). */
 export const VISIT_TYPES = ['presencial', 'online', 'telefone', 'evento'] as const;
@@ -129,7 +130,10 @@ export interface Visit {
   responsible: VisitPerson | null;
   /** Data/hora prevista (UTC). Reagendar muda este campo. */
   scheduledAt: IsoDateTime;
+  /** Modo do contato (como). */
   type: VisitType;
+  /** Finalidade (para quê) — cadastro do laboratório (CRMLAB-190, D-330). Pode estar inativa. */
+  purpose: VisitPurposeRef;
   /** Objetivo/pauta. */
   agenda: string | null;
   status: VisitStatus;
@@ -201,6 +205,8 @@ export interface ListVisitsQuery {
   doctorId?: string;
   responsibleId?: string;
   status?: VisitStatus;
+  /** Uma finalidade (CRMLAB-190). A Agenda filtra várias na tela. */
+  purposeId?: string;
 }
 
 export interface ListVisitsResponse {
@@ -215,6 +221,8 @@ export interface CreateVisitRequest {
   responsibleId: string;
   scheduledAt: IsoDateTime;
   type: VisitType;
+  /** Finalidade ATIVA do laboratório — obrigatória (CRMLAB-190, D-330). */
+  purposeId: string;
   agenda?: string | null;
 }
 
@@ -226,6 +234,8 @@ export interface UpdateVisitRequest {
   doctorId?: string;
   responsibleId?: string;
   type?: VisitType;
+  /** Só revalidada (ativa) quando muda. */
+  purposeId?: string;
   agenda?: string | null;
 }
 

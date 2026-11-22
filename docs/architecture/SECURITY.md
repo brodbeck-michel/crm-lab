@@ -80,6 +80,26 @@ A **única credencial que não é de usuário**: o celular da recepção pareado
 - Matriz de permissões: `docs/design` §telas + `PAGES.md` (requiredRoles)
 - **A UI esconde, o servidor recusa** — toda checagem duplicada no backend
 - Alçada de desconto verificada no backend em TODA escrita de proposta
+- **Perfis:** `attendant`, `representative` (D-329), `manager`, `admin` e `platform_operator`. Fora da
+  Visitação o `representative` tem exatamente as permissões da `attendant` (`isFrontlineRole`).
+- **403 x 404 — perfil x dono.** Recusa **por perfil** (a rota não é do papel) é `403 FORBIDDEN` com
+  `details.requiredRoles`. Recurso que existe mas **não é do escopo de quem pede** (outro tenant, outra
+  carteira, proposta de outra atendente) é `404 NOT_FOUND` — nunca `403`, para não vazar existência.
+
+### Visitação Médica — escopo por carteira (CRMLAB-189, D-329)
+
+- **Perfil:** `/doctors` e `/visits` exigem `representative`, `manager` ou `admin`
+  (`requireRoles(...VISITATION_ROLES)`). Atendente → `403`.
+- **Escopo do representante, aplicado no SQL** (não filtrando depois): médico só com
+  `doctors.responsible_user_id = ctx.userId`; visita só com
+  `doctors.responsible_user_id = ctx.userId OR doctor_visits.responsible_user_id = ctx.userId`. O escopo
+  entra como parâmetro do repositório (`ownerId`) em **toda** leitura que decide acesso — listas,
+  detalhe, e a carga da visita/médico que antecede qualquer escrita, anexo (inclusive download),
+  linha do tempo e registro manual. Fora do escopo → `404`.
+- **Escrita não amplia o escopo:** o representante não cria médico em outra carteira, não agenda
+  para médico de outra carteira, não põe outra pessoa como responsável e não transfere carteira.
+- **Gestor/admin:** sem recorte dentro do tenant; só eles transferem carteira (`POST /doctors/transfer`,
+  auditado por médico e por visita) e veem `GET /doctors/portfolios`.
 
 ---
 

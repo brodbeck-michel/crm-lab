@@ -10,6 +10,7 @@
  */
 import type { IsoDateTime } from './api.types.js';
 import type { VisitPerson, VisitStatus, VisitType } from './visit.types.js';
+import type { VisitPurposeRef } from './visit-purpose.types.js';
 
 /** Como o contato aconteceu (registro manual). */
 export const DOCTOR_INTERACTION_TYPES = ['ligacao', 'email', 'whatsapp'] as const;
@@ -66,6 +67,8 @@ export interface DoctorTimelineVisit {
   occurredAt: IsoDateTime;
   status: VisitStatus;
   type: VisitType;
+  /** Finalidade da visita (CRMLAB-190, D-330). */
+  purpose: VisitPurposeRef;
   scheduledAt: IsoDateTime;
   checkInAt: IsoDateTime | null;
   checkOutAt: IsoDateTime | null;

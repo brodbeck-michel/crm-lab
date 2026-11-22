@@ -6,8 +6,8 @@
  * junta esses registros com as visitas (`doctor_visits`).
  *
  * Regras (D-261):
- *  - todo papel de laboratorio ve, lanca, edita e exclui (resposta 2A do
- *    epico); o `platform_operator` ja fica na rota;
+ *  - representante, gestor e admin (D-329): gestor/admin em qualquer medico;
+ *    o representante so na carteira dele (outro medico -> 404);
  *  - medico de outro tenant, inexistente, ou registro de OUTRO medico ->
  *    `NOT_FOUND` (nunca `FORBIDDEN`);
  *  - `occurredAt` nao pode ficar mais que 5 min no futuro; descricao
@@ -41,6 +41,7 @@ import {
 } from '../repositories/doctor-interaction.repository.js';
 import { DoctorRepository } from '../repositories/doctor.repository.js';
 import type { AuditService } from './audit.service.js';
+import { assertVisitationRole, portfolioOwner } from './visitation-access.js';
 
 export interface DoctorInteractionService {
   timeline(ctx: TenantContext, doctorId: string, query: DoctorTimelineQuery): Promise<DoctorTimelineResponse>;
@@ -116,9 +117,13 @@ export function createDoctorInteractionService(deps: DoctorInteractionServiceDep
   const audit = deps.audit;
   const now = deps.now ?? (() => new Date());
 
-  /** Medico do tenant (ativo ou inativo); senao `NOT_FOUND`. */
+  /**
+   * Medico do tenant (ativo ou inativo) e do escopo de quem pede — para o
+   * representante, so da carteira dele (D-329); senao `NOT_FOUND`.
+   */
   async function assertDoctor(ctx: TenantContext, doctorId: string): Promise<void> {
-    const doctor = await doctors.findById(ctx.tenantId, doctorId);
+    assertVisitationRole(ctx);
+    const doctor = await doctors.findById(ctx.tenantId, doctorId, portfolioOwner(ctx));
     if (!doctor) throw notFound({ resource: 'doctor', id: doctorId });
   }
 
@@ -178,6 +183,7 @@ export function createDoctorInteractionService(deps: DoctorInteractionServiceDep
     },
 
     async update(ctx, doctorId, id, dto) {
+      await assertDoctor(ctx, doctorId);
       const current = await repository.findById(ctx.tenantId, doctorId, id);
       if (!current) throw notFound({ resource: 'doctor_interaction', id });
 
@@ -214,6 +220,7 @@ export function createDoctorInteractionService(deps: DoctorInteractionServiceDep
     },
 
     async delete(ctx, doctorId, id) {
+      await assertDoctor(ctx, doctorId);
       const current = await repository.findById(ctx.tenantId, doctorId, id);
       if (!current) throw notFound({ resource: 'doctor_interaction', id });
       const deleted = await repository.delete(ctx.tenantId, doctorId, id);

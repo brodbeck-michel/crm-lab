@@ -217,6 +217,8 @@ export const queryKeys = {
   holidays: (year: number) => ['settings', 'holidays', year] as const,
   /** ['settings', 'business-calendar'] — `/settings/business-calendar` (§6e, CRMLAB-84) */
   businessCalendar: () => ['settings', 'business-calendar'] as const,
+  /** ['settings', 'visit-purposes'] — finalidades da visita (§14, CRMLAB-190) */
+  visitPurposes: () => ['settings', 'visit-purposes'] as const,
 
   /** ['doctors', filters] — `/visitation/doctors` (§22, CRMLAB-86) */
   doctors: (filters?: ListDoctorsQuery) => ['doctors', filters ?? {}] as const,
@@ -224,6 +226,12 @@ export const queryKeys = {
   doctor: (id: string) => ['doctors', 'detail', id] as const,
   /** ['doctors', 'timeline', id] — linha do tempo da ficha (CRMLAB-89, D-261) */
   doctorTimeline: (id: string) => ['doctors', 'timeline', id] as const,
+  /** ['doctors', 'specialties', active] — lista de especialidades (CRMLAB-188, D-328) */
+  doctorSpecialties: (active?: boolean) => ['doctors', 'specialties', active ?? 'all'] as const,
+  /** ['doctors', 'picker', term] — busca do médico no formulário da proposta (CRMLAB-188) */
+  doctorPicker: (term: string) => ['doctors', 'picker', term] as const,
+  /** ['doctors', 'portfolios'] — Carteiras (§22c, CRMLAB-189); cai junto com o escopo `doctors` */
+  doctorPortfolios: () => ['doctors', 'portfolios'] as const,
   /** ['visits', filters] — `/visitation/agenda` (§23, CRMLAB-87) */
   visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
   /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */

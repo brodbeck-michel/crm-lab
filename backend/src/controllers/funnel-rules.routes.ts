@@ -28,7 +28,7 @@ export function funnelRulesModule(deps: ApiModuleDeps): ApiModule {
 
   router.get(
     '/',
-    requireRoles('attendant', 'manager', 'admin'),
+    requireRoles('attendant', 'representative', 'manager', 'admin'),
     (req: Request, res: Response, next): void => {
       service
         .get(getContext(req))

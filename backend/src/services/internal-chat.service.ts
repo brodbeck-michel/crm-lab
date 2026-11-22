@@ -69,7 +69,7 @@ function clamp(value: number | undefined, fallback: number, min: number, max: nu
 function assertLabMember(ctx: TenantContext): void {
   if (ctx.role === 'platform_operator') {
     throw new BusinessError('FORBIDDEN', {
-      requiredRoles: ['attendant', 'manager', 'admin'],
+      requiredRoles: ['attendant', 'representative', 'manager', 'admin'],
     });
   }
 }

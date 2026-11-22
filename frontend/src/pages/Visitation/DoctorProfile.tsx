@@ -18,7 +18,7 @@ import {
   type VisitStatus,
 } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
+import { useVisitationResponsibles } from './visitation-access';
 import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys } from '@/api/query-keys';
@@ -28,7 +28,18 @@ import { EmptyState, Modal } from '@/components/shared';
 import { Button, Chip, Input, Select, TextArea, useToast } from '@/components/ui';
 import type { ChipTone } from '@/components/ui';
 import { formatDateTime, fromDateTimeInputs, toDateInput, toTimeInput } from './agenda-dates';
+import { PurposeDot } from './agenda-ui';
 import { DoctorModal, crmLabel } from './Doctors';
+import {
+  AbcBadge,
+  PhoneWithWhatsApp,
+  acceptsPrivateLabel,
+  formatBirthday,
+  formatFee,
+  formatVisitHours,
+  structuredAddress,
+} from './doctor-ui';
+import { formatIsoDay } from '@/lib/format';
 
 const PAGE_SIZE = 20;
 
@@ -63,12 +74,8 @@ export default function DoctorProfile() {
     enabled: doctorId.length > 0,
   });
 
-  // Usuários ativos do laboratório, qualquer papel — o modal de edição escolhe o responsável.
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-    enabled: editing,
-  });
+  // Responsáveis elegíveis (D-329) — o modal de edição escolhe o responsável.
+  const { responsibles } = useVisitationResponsibles();
 
   const breadcrumb = [{ label: 'Médicos', to: '/visitation/doctors' }, { label: 'Ficha do médico' }];
 
@@ -112,6 +119,7 @@ export default function DoctorProfile() {
         description={subtitle || undefined}
         actions={
           <div className="flex items-center gap-sm">
+            <AbcBadge doctor={doctor} />
             {!doctor.isActive && <Chip tone="inactive">Inativo</Chip>}
             <Button variant="secondary" onClick={() => setEditing(true)}>
               Editar
@@ -125,40 +133,119 @@ export default function DoctorProfile() {
       <DoctorTimeline doctorId={doctor.id} />
 
       {editing && (
-        <DoctorModal doctor={doctor} assignees={assigneesQuery.data?.assignees ?? []} onClose={() => setEditing(false)} />
+        <DoctorModal doctor={doctor} assignees={responsibles} onClose={() => setEditing(false)} />
       )}
     </PageContainer>
   );
 }
 
-function DoctorDetails({ doctor }: { doctor: Doctor }) {
-  const fields: Array<[string, ReactNode]> = [
-    ['Clínica/consultório', doctor.clinic],
-    ['Endereço', doctor.address],
-    ['Telefone/WhatsApp', doctor.phone ? <span className="tabular-nums">{doctor.phone}</span> : null],
-    ['E-mail', doctor.email],
-    ['Secretária/contato', doctor.contactName],
-    ['Melhor dia e horário', doctor.visitPreference],
-    ['Responsável pela carteira', doctor.responsible?.name ?? null],
-  ];
+type DetailField = [string, ReactNode];
 
+function DetailSection({ title, fields, children }: { title: string; fields: DetailField[]; children?: ReactNode }) {
+  const filled = fields.filter(([, value]) => value !== null && value !== undefined && value !== '');
   return (
-    <section aria-label="Dados do médico" className="rounded-lg border border-neutral-200 bg-surface p-lg">
-      <dl className="m-0 grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3">
-        {fields.map(([label, value]) => (
-          <div key={label} className="min-w-0">
-            <dt className="text-caption text-neutral-600">{label}</dt>
-            <dd className="m-0 break-words font-body text-body text-text">{value ?? '—'}</dd>
-          </div>
-        ))}
-      </dl>
-      {doctor.notes && (
-        <div className="mt-md">
-          <div className="text-caption text-neutral-600">Observações</div>
-          <p className="m-0 whitespace-pre-wrap font-body text-body text-text">{doctor.notes}</p>
-        </div>
+    <section aria-label={title} className="rounded-lg border border-neutral-200 bg-surface p-lg">
+      <h2 className="m-0 mb-md font-heading text-label font-semibold text-text">{title}</h2>
+      {filled.length === 0 && !children ? (
+        <p className="m-0 text-caption text-neutral-600">Não informado</p>
+      ) : (
+        <>
+          {filled.length > 0 && (
+            <dl className="m-0 grid grid-cols-1 gap-md sm:grid-cols-2 lg:grid-cols-3">
+              {filled.map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <dt className="text-caption text-neutral-600">{label}</dt>
+                  <dd className="m-0 whitespace-pre-wrap break-words font-body text-body text-text">{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {children}
+        </>
       )}
     </section>
+  );
+}
+
+/** Dados do cadastro em seções (PAGES.md §22b, CRMLAB-188 · D-328). */
+function DoctorDetails({ doctor }: { doctor: Doctor }) {
+  const address = structuredAddress(doctor);
+  const privateLabel =
+    doctor.acceptsPrivate === null && doctor.monthlyPrivateConsultations === null
+      ? null
+      : acceptsPrivateLabel(doctor.acceptsPrivate);
+
+  return (
+    <div className="grid grid-cols-1 gap-md lg:grid-cols-2">
+      <DetailSection
+        title="Dados do médico"
+        fields={[
+          ['Especialidade', doctor.specialty],
+          ['Aniversário', formatBirthday(doctor.birthDay, doctor.birthMonth, doctor.birthYear)],
+          ['Telefone/WhatsApp', doctor.phone ? <PhoneWithWhatsApp phone={doctor.phone} label={doctor.name} /> : null],
+          ['E-mail', doctor.email],
+          ['Responsável pela carteira', doctor.responsible?.name ?? null],
+          ['Observações', doctor.notes],
+        ]}
+      />
+      <DetailSection
+        title="Clínica"
+        fields={[
+          ['Clínica/consultório', doctor.clinic],
+          ['Atende particular', privateLabel],
+          ['Consultas/mês', doctor.monthlyConsultations],
+          ['Particulares/mês', doctor.monthlyPrivateConsultations],
+          ['Valor da consulta', formatFee(doctor.consultationFee)],
+        ]}
+      />
+      <DetailSection
+        title="Horário para representante"
+        fields={[
+          [
+            'Faixas',
+            doctor.visitHours.length > 0 ? (
+              <ul className="m-0 list-none p-0">
+                {doctor.visitHours.map((entry) => (
+                  <li key={`${entry.weekdays.join('')}-${entry.start}-${entry.end}`} className="tabular-nums">
+                    {formatVisitHours(entry)}
+                  </li>
+                ))}
+              </ul>
+            ) : null,
+          ],
+          ['Observação de horário', doctor.visitPreference],
+        ]}
+      />
+      <DetailSection
+        title="Parceria"
+        fields={[
+          ['Parceiro', doctor.isPartner ? 'Sim' : null],
+          ['Parceiro desde', doctor.partnerSince ? formatIsoDay(doctor.partnerSince) : null],
+          ['Anotações', doctor.partnershipNotes],
+        ]}
+      />
+      <DetailSection
+        title="Endereço"
+        fields={[['Endereço', address ? address.join('\n') : doctor.address]]}
+      />
+      <DetailSection
+        title="Secretária"
+        fields={[
+          ['Nome', doctor.secretaryName],
+          [
+            'Aniversário',
+            formatBirthday(doctor.secretaryBirthDay, doctor.secretaryBirthMonth, doctor.secretaryBirthYear),
+          ],
+          [
+            'Telefone/WhatsApp',
+            doctor.secretaryPhone ? (
+              <PhoneWithWhatsApp phone={doctor.secretaryPhone} label={doctor.secretaryName ?? 'secretária'} />
+            ) : null,
+          ],
+          ['Anotações', doctor.secretaryNotes],
+        ]}
+      />
+    </div>
   );
 }
 
@@ -294,7 +381,10 @@ function VisitItem({ visit }: { visit: DoctorTimelineVisit }) {
     <>
       <div className="flex flex-wrap items-center justify-between gap-sm">
         <div className="flex flex-wrap items-center gap-sm">
-          <span className="font-heading text-label font-semibold text-text">Visita</span>
+          <span className="inline-flex items-center gap-[6px] font-heading text-label font-semibold text-text">
+            <PurposeDot color={visit.purpose.color} />
+            {visit.purpose.name}
+          </span>
           <Chip tone={STATUS_TONES[visit.status]}>{VISIT_STATUS_LABELS[visit.status]}</Chip>
           <span className="text-caption tabular-nums text-neutral-600">{formatDateTime(visit.occurredAt)}</span>
         </div>

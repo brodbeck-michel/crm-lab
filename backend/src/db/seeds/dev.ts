@@ -30,6 +30,7 @@ import type { DbTx } from '../types.js';
 import { EXAM_CATALOG, EXAM_CATALOG_SECONDARY, type SeedExam } from './catalog.js';
 import { makeRandom, seedUuid } from './ids.js';
 import { INSURANCE_SEED } from './insurances.js';
+import { seedVisitation } from './visitation.js';
 import {
   THEME_AZUL_JALECO,
   THEME_TERRACOTA,
@@ -896,6 +897,28 @@ async function seedTenant(
     manager,
     attendants,
   });
+
+  // ---- visitacao por carteira (CRMLAB-189, D-329) ---------------------------
+  // Fora do gerador aleatorio: o resto do dataset continua identico.
+  if (plan.slug === 'lab-vida') {
+    const representatives = await seedVisitation(tx, { tenantId, slug: plan.slug, now, passwordHash });
+    for (const rep of representatives) {
+      users.push({
+        id: rep.id,
+        key: rep.email,
+        name: rep.name,
+        role: 'representative',
+        discountLimit: DEFAULT_DISCOUNT_LIMIT.representative,
+      });
+      credentials.push({
+        label: `${plan.name} — ${rep.name}`,
+        email: rep.email,
+        password: DEV_PASSWORD,
+        role: 'representative',
+        tenantSlug: plan.slug,
+      });
+    }
+  }
 
   return {
     users: users.length,

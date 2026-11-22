@@ -4283,3 +4283,75 @@ Frontend: botão "Resetar senha" em `/settings/users` (`ResetPasswordDialog`) e 
 (`RequireAuth` redireciona; o cliente liga a flag ao receber o 403). Testes: backend
 `tests/users/reset-password.spec.ts` (+15); frontend `ChangePassword.spec`, `ResetPasswordDialog.spec`,
 guards e client (+9).
+
+### 🔄 CRMLAB-188 — Cadastro de médico ampliado e curva ABC automática (2026-11-21, aguardando validação)
+
+Branch `feature/CRMLAB-188-cadastro-medico-ampliado` (épico Visitação v2, CRMLAB-187). Contrato: D-328,
+SCHEMA §35/§51, API_CONTRACTS §13 e §3 (`doctorId`), API_ERRORS (`DOCTOR_SPECIALTY_ALREADY_EXISTS`),
+BUSINESS_RULES §12b, PAGES §22/§22b + formulário de proposta, SERVICES §30.
+- **db:** `070_doctor_profile_expanded.sql` (`doctor_specialties` com RLS, colunas novas em `doctors`,
+  `proposals.doctor_id`, trigger de `updated_at` ignorando as colunas da ABC) e
+  `071_doctor_profile_backfill.sql` (semeia as especialidades do CFM, migra o texto da especialidade por
+  nome normalizado, `contact_name` → `secretary_name`, vincula propostas pelo nome exato — ambíguo não
+  vincula). Colunas antigas ficam (regra das 3 migrações) com escrita dupla. Teste
+  `tests/db/migration-071-doctor-profile.spec.ts`.
+- **api:** `DoctorSpecialtyService` + `/doctors/specialties` (gestor/admin escrevem), validações novas no
+  `DoctorService`, `DoctorAbcService` (Pareto 80/95 sobre propostas `ganho` dos últimos 12 meses) com
+  agendador diário no `main.ts` e `POST /doctors/abc/recalculate` (gestor/admin, audit); `doctorId` na
+  proposta (só médico ativo do mesmo tenant). Testes em `tests/doctors/` e
+  `tests/proposals/proposal-doctor-link.spec.ts`.
+- **ui:** `DoctorModal` em seções (CEP via ViaCEP no navegador, falha em silêncio; horário em faixas;
+  "+ nova especialidade" para gestor/admin), ficha em seções com WhatsApp `wa.me` e selo ABC, lista com
+  filtros de especialidade/ABC e [Recalcular curva ABC], `DoctorPicker` em Novo orçamento e na edição
+  da proposta. Testes: `Doctors.spec`, `DoctorProfile.spec`, `DoctorPicker.spec`, `viacep.spec`.
+
+### ✅ CRMLAB-190 — Finalidade da visita: cadastro por laboratório, cor na agenda e filtro (2026-11-21)
+
+Branch `feature/CRMLAB-190-finalidade-visita` (a partir da integração do épico `feature/CRMLAB-187-visitacao-v2`),
+D-330 (revê a D-262 item 6). Migração `073_visit_purposes.sql` (070/071 = CRMLAB-188, 072 = CRMLAB-189).
+Cadastro `visit_purposes` por tenant (nome, cor da paleta fixa de 8 tokens `--color-purpose-*`, ativo,
+ordem), com as 5 finalidades padrão semeadas nos tenants existentes e, pelo trigger em `tenants`, nos
+novos. `doctor_visits.purpose_id` obrigatório (as visitas antigas viraram "Visita"); `Visit.purpose`
+`{ id, name, color }` na agenda e na linha do tempo do médico. Rotas `/settings/visit-purposes`
+(leitura todos, escrita gestor+); `GET /visits?purposeId=`. Agenda: cor do bloco/linha/cartão pela
+finalidade, status por ícone + texto, filtro de finalidade em chips. Tela "Finalidades" em Cadastros.
+
+Backend: `visit-purpose.{routes,service,repository}.ts` (módulo `/settings/visit-purposes`, audit log em
+criar/editar, nome repetido → `VALIDATION_ERROR` em `fields.name`), `purposeId` validado em `POST/PATCH
+/visits` (ativa e do mesmo tenant; inativa só bloqueia quando a visita MUDA para ela), `purpose` no
+shape da visita e da linha do tempo do médico. Frontend: `api/visit-purposes.ts`, Agenda (Semana, Lista,
+Celular) com a cor da finalidade + `StatusIcon`, chips de finalidade, campo Finalidade* no formulário,
+detalhe da visita e ficha do médico; `pages/Settings/VisitPurposes.tsx` (aba "Finalidades" de Cadastros).
+Testes: backend `tests/db/migration-073-visit-purposes.spec.ts`, `tests/visits/visit-purposes.spec.ts`,
+`visits.spec`/`visit-record.spec`/`doctor-timeline.spec`/`route-tenant-isolation.spec`; frontend
+`Agenda.spec` (cor, ícone de status, filtro, finalidade inativa), `VisitPurposes.spec`, `Registers.spec`,
+`Sidebar.spec`.
+
+### 🔄 CRMLAB-189 — Perfil representante e escopo por carteira na Visitação (2026-11-21, aguardando validação)
+
+Branch `feature/CRMLAB-189-representante-carteira` (épico Visitação v2, CRMLAB-187). Contrato: D-329
+(revoga D-255 item 3, D-256 item 9, D-261 item 8), SCHEMA §52, API_CONTRACTS §1/§13/§14,
+BUSINESS_RULES §12–§15, SECURITY "Autorização", PAGES §22–§23 e §22c.
+- **db:** `072_representative_role.sql` (perfil `representative` no `CHECK` de `users.role`; não mexe em
+  dado — médico sem responsável ou com atendente fica como está e cai no filtro "Sem responsável").
+- **shared:** `representative` em `UserRole`, `isFrontlineRole`, `VISITATION_ROLES`,
+  `VISITATION_RESPONSIBLE_ROLES`, `ruleActorRoleOf` (representante conta como atendente nas Regras);
+  `DoctorPortfolio` (corte `abc` opcional, entra quando o CRMLAB-188 for integrado) e `TransferDoctors*`.
+- **api:** atendente recebe 403 em todo `/doctors` e `/visits`; representante recortado pela carteira
+  (`services/visitation-access.ts`) com cobertura por visita, fora do escopo → 404; responsável elegível
+  só representante/gestor/admin e obrigatório em médico novo/editado; `GET /doctors?unassigned=true`,
+  `GET /doctors/portfolios` e `POST /doctors/transfer` (gestor/admin, transação com `FOR UPDATE`, opção de
+  levar as visitas futuras, audit `transfer_doctor`/`transfer_visit`). Os serviços que comparavam
+  `role === 'attendant'` passaram a `isFrontlineRole`. Seeds: representantes Carla e Diego no Lab Vida
+  (`db/seeds/visitation.ts`). Testes: `tests/visits/representative-scope.spec.ts` + ajustes em
+  `doctors`, `visits`, `visit-record`, `doctor-timeline` e `route-tenant-isolation`.
+- **ui:** perfil Representante na gestão de usuários; Visitação some do menu e das rotas da atendente;
+  tela inicial do representante = Agenda; filtro por responsável e "Sem responsável" só para
+  gestor/admin; seletores de responsável só com perfis elegíveis; tela nova **Carteiras**
+  (`/visitation/portfolios`) com transferência em lote. Testes: `Portfolios.spec`, `route-config.spec`,
+  `Doctors.spec`.
+- **integração no épico (188 + 189 + 190):** o `DoctorPicker` da proposta (188) chamava `GET /doctors`,
+  que passou a dar 403 para a atendente e a recortar pela carteira para o representante. Rota nova
+  `GET /doctors/lookup` (D-329 item 12): todo papel, sem carteira, só ativos, shape mínimo. Testes
+  `tests/doctors/doctor-lookup.spec.ts` + inventário (142 rotas). O corte A/B/C nas Carteiras ainda não
+  foi ligado (o `abc` segue opcional no shape) — fica para um card próprio.

@@ -254,7 +254,7 @@ export async function workload(
             ) prop ON prop.user_id = u.id
       WHERE u.tenant_id = $1
         AND u.is_active = TRUE
-        AND u.role IN ('attendant', 'manager', 'admin')
+        AND u.role IN ('attendant', 'representative', 'manager', 'admin')
       ORDER BY u.name ASC, u.id ASC`,
     params,
   );

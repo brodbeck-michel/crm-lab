@@ -207,7 +207,7 @@ CREATE TABLE users (
   email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   name VARCHAR(255) NOT NULL,
-  role VARCHAR(50) NOT NULL, -- 'attendant', 'manager', 'admin', 'platform_operator'
+  role VARCHAR(50) NOT NULL, -- 'attendant', 'representative' (072, D-329), 'manager', 'admin', 'platform_operator'
   discount_limit_percent INT DEFAULT 15, -- máximo desconto permitido
   is_active BOOLEAN DEFAULT TRUE,
   last_login_at TIMESTAMP,
@@ -218,7 +218,8 @@ CREATE TABLE users (
   
   FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
   UNIQUE(tenant_id, email),
-  CHECK (role IN ('attendant', 'manager', 'admin', 'platform_operator'))
+  CONSTRAINT users_role_check
+    CHECK (role IN ('attendant', 'representative', 'manager', 'admin', 'platform_operator')) -- 072
 );
 
 CREATE INDEX idx_users_tenant_id ON users(tenant_id);
@@ -1991,6 +1992,8 @@ CREATE INDEX idx_message_edits_message_id ON message_edits(message_id);
 Médicos solicitantes do laboratório — base do épico **Visitação Médica** (CRMLAB-85). Os próximos
 cards (agenda de visitas, check-in/out, linha do tempo) vão referenciar `doctors.id`.
 **Não** se liga à proposta: `proposals.requesting_doctor` (§6, migração 017) continua texto livre.
+**Ampliada no CRMLAB-188 (§51, D-328):** especialidade por lista, dados da clínica, horário
+estruturado, parceria, endereço estruturado, secretária, curva ABC e `proposals.doctor_id`.
 
 ```sql
 CREATE TABLE doctors (
@@ -2133,6 +2136,58 @@ CREATE INDEX idx_doctor_visit_attachments_uploaded_by ON doctor_visit_attachment
   ids são `gen_random_uuid()`, então não colidem com os de `message_media`.
 - Migração **única** (colunas + tabela + policy), sem backfill: as visitas que já existem ficam
   com tudo `NULL` e nenhuma é `realizada` (a 048 não tinha rota que gravasse esse status).
+
+### 36a. `visit_purposes` e `doctor_visits.purpose_id` (migração 073 — CRMLAB-190, D-330)
+Finalidade da visita (para quê), cadastrada por laboratório, com cor de uma paleta fixa. Fica
+ao lado do `type` (modo: como), que continua.
+
+```sql
+CREATE TABLE visit_purposes (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name        VARCHAR(60) NOT NULL CHECK (length(trim(name)) > 0),
+  color       VARCHAR(20) NOT NULL,              -- CHAVE da paleta, nunca hex
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_by  UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(), -- trigger trg_visit_purposes_updated_at
+  CHECK (color IN ('azul','verde','agua','violeta','ambar','rosa','terracota','cinza'))
+);
+CREATE UNIQUE INDEX uq_visit_purposes_tenant_name ON visit_purposes(tenant_id, lower(name));
+CREATE INDEX idx_visit_purposes_tenant_order ON visit_purposes(tenant_id, sort_order);
+CREATE INDEX idx_visit_purposes_created_by ON visit_purposes(created_by);
+-- ENABLE ROW LEVEL SECURITY + policy visit_purposes_tenant_isolation (mesmo arquivo)
+
+-- Semente: as 5 finalidades padrão de um laboratório (idempotente).
+CREATE FUNCTION seed_visit_purposes(p_tenant_id UUID) RETURNS void ...;
+CREATE FUNCTION trg_seed_visit_purposes() RETURNS trigger ...;   -- chama a de cima com NEW.id
+CREATE TRIGGER trg_tenants_seed_visit_purposes AFTER INSERT ON tenants
+  FOR EACH ROW EXECUTE FUNCTION trg_seed_visit_purposes();
+
+ALTER TABLE doctor_visits ADD COLUMN purpose_id UUID REFERENCES visit_purposes(id);
+-- backfill: toda visita existente recebe a "Visita" do próprio tenant
+ALTER TABLE doctor_visits ALTER COLUMN purpose_id SET NOT NULL;
+CREATE INDEX idx_doctor_visits_purpose_id ON doctor_visits(purpose_id);
+```
+
+| Ordem | Nome | Cor |
+|---|---|---|
+| 1 | Visita | `azul` |
+| 2 | Solicitação de patrocínio | `verde` |
+| 3 | Solicitação de material | `agua` |
+| 4 | Acesso a exames | `violeta` |
+| 5 | Compromisso interno | `cinza` |
+
+- **Semente em todo tenant:** a migração chama `seed_visit_purposes` para cada tenant existente;
+  os novos recebem pelo trigger em `tenants` (onboarding do console, seeds, factories de teste).
+  `ON CONFLICT (tenant_id, lower(name)) DO NOTHING`: rodar de novo não duplica.
+- **Nome único no laboratório** sem diferenciar maiúscula (`lower(name)`); outro tenant pode repetir.
+- **Sem DELETE:** inativar (`is_active = FALSE`). A visita referencia a finalidade
+  (`purpose_id` sem `ON DELETE`, NO ACTION), como o médico (§36).
+- **`purpose_id` é do mesmo tenant da visita**: o service confere (ativa ao criar/trocar).
+- **Backfill:** `purpose_id` = a "Visita" do próprio tenant, depois `SET NOT NULL`. Idempotente
+  (`WHERE purpose_id IS NULL`, `ADD COLUMN IF NOT EXISTS`).
 
 ### 38. `doctor_interactions` (migração 052 — CRMLAB-89, D-261)
 Registros de interação lançados à mão na ficha do médico (ligação, e-mail, WhatsApp). A linha do
@@ -2515,6 +2570,88 @@ CREATE INDEX idx_scans_expires_at ON scans(expires_at);
   é copiado para `message_media` e a linha de `scans` + o arquivo são apagados. Anonimização de paciente
   (D-063/D-075) não precisa olhar esta tabela.
 
+### 51. Cadastro de médico ampliado: `doctor_specialties`, colunas novas em `doctors` e `proposals.doctor_id` (migrações 070–071 — CRMLAB-188, D-328)
+Dono: `DoctorService`/`DoctorSpecialtyService`/`DoctorAbcService` (SERVICES.md §30). A **070** é só DDL
+(tabela + policy no mesmo arquivo, colunas aditivas); a **071** é só dado, idempotente.
+
+```sql
+CREATE TABLE doctor_specialties (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name VARCHAR(120) NOT NULL,
+  normalized_name VARCHAR(120) NOT NULL,   -- sem acento/caixa/espaço repetido (normalizeLookupName)
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),   -- trigger trg_doctor_specialties_updated_at
+  CHECK (btrim(name) <> '')
+);
+CREATE UNIQUE INDEX uq_doctor_specialties_tenant_name ON doctor_specialties(tenant_id, normalized_name);
+-- ENABLE ROW LEVEL SECURITY + policy doctor_specialties_tenant_isolation (mesmo arquivo)
+
+ALTER TABLE doctors
+  ADD COLUMN specialty_id UUID REFERENCES doctor_specialties(id) ON DELETE SET NULL,
+  ADD COLUMN birth_day SMALLINT, ADD COLUMN birth_month SMALLINT, ADD COLUMN birth_year SMALLINT,
+  ADD COLUMN accepts_private BOOLEAN,                 -- NULL = não informado
+  ADD COLUMN monthly_consultations INTEGER,
+  ADD COLUMN monthly_private_consultations INTEGER,   -- ≤ monthly_consultations
+  ADD COLUMN consultation_fee NUMERIC(10,2),
+  ADD COLUMN visit_hours JSONB NOT NULL DEFAULT '[]', -- [{ "weekdays": [1,3], "start": "08:00", "end": "10:00" }]
+  ADD COLUMN is_partner BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN partner_since DATE,
+  ADD COLUMN partnership_notes TEXT,
+  ADD COLUMN address_zip CHAR(8),                     -- só dígitos
+  ADD COLUMN address_street VARCHAR(255), ADD COLUMN address_number VARCHAR(20),
+  ADD COLUMN address_complement VARCHAR(120), ADD COLUMN address_district VARCHAR(120),
+  ADD COLUMN address_city VARCHAR(120), ADD COLUMN address_state CHAR(2),
+  ADD COLUMN secretary_name VARCHAR(255),
+  ADD COLUMN secretary_birth_day SMALLINT, ADD COLUMN secretary_birth_month SMALLINT,
+  ADD COLUMN secretary_birth_year SMALLINT,
+  ADD COLUMN secretary_phone VARCHAR(30), ADD COLUMN secretary_notes TEXT,
+  ADD COLUMN abc_class CHAR(1),                       -- 'A' | 'B' | 'C'; NULL = nunca calculada
+  ADD COLUMN abc_base_value NUMERIC(14,2),
+  ADD COLUMN abc_calculated_at TIMESTAMPTZ;
+-- CHECKs: aniversário (dia e mês juntos, ano só com eles, faixas), consultas ≥ 0 e particulares ≤
+-- total, valor ≥ 0, visit_hours é array, CEP 8 dígitos, UF 2 maiúsculas, abc_class em A/B/C.
+CREATE INDEX idx_doctors_specialty_id ON doctors(specialty_id);
+CREATE INDEX idx_doctors_tenant_abc_class ON doctors(tenant_id, abc_class);
+-- trg_doctors_updated_at passa a usar doctors_set_updated_at(): ignora as 3 colunas abc_*.
+
+ALTER TABLE proposals ADD COLUMN doctor_id UUID REFERENCES doctors(id) ON DELETE SET NULL;
+CREATE INDEX idx_proposals_doctor_id ON proposals(doctor_id);
+CREATE INDEX idx_proposals_tenant_doctor_won ON proposals(tenant_id, doctor_id, closed_at)
+  WHERE status = 'ganho' AND doctor_id IS NOT NULL;
+```
+
+- **Colunas antigas ficam** (regra das 3 migrações): `doctors.specialty` e `doctors.contact_name` são
+  escritas em dobro pelo service (nome da especialidade escolhida; nome da secretária) até a migração
+  que as remover. `address` e `visit_preference` continuam como dado próprio (endereço texto antigo;
+  "observação de horário").
+- **`specialty_id` e `doctor_id` são do mesmo tenant:** FK simples + conferência no service (o RLS de
+  `doctor_specialties`/`doctors` esconde a linha do outro laboratório, então o service nem a acha).
+- **Curva ABC** é escrita só pelo `DoctorAbcService`; o trigger de `updated_at` não anda quando só
+  ela muda (D-328 item 9).
+- **071 (dados, idempotente):** semeia as especialidades do CFM em todo tenant; texto antigo de
+  especialidade que não casa (nome normalizado) vira especialidade nova; liga `specialty_id`; copia
+  `contact_name` → `secretary_name`; liga `proposals.doctor_id` pelo nome normalizado **exato** do
+  `requesting_doctor`, só sem homônimo no tenant (ativos e inativos). Testada em
+  `tests/db/migration-071-doctor-profile.spec.ts`.
+
+
+### 52. Perfil `representative` em `users.role` (migração 072 — CRMLAB-189, D-329)
+Novo perfil de usuário de laboratório, o **Representante** (visitação médica por carteira).
+
+```sql
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('attendant', 'representative', 'manager', 'admin', 'platform_operator'));
+```
+
+- **Sem backfill e sem mexer em dado:** `doctors.responsible_user_id` e
+  `doctor_visits.responsible_user_id` continuam como estão. Médico sem responsável ou com atendente
+  como responsável aparece no filtro `?unassigned=true` (API_CONTRACTS §13) para o gestor atribuir.
+- A carteira é `doctors.responsible_user_id` (índice `idx_doctors_responsible_user_id`, migração
+  047); o escopo da visita usa também `idx_doctor_visits_responsible_user_id` (048). Nenhum índice
+  novo.
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
@@ -2634,6 +2771,7 @@ para ser a exceção visível e auditável, nunca o caminho normal:
 | **Pareamento do dispositivo de captura** | `POST /capture/pair` acha o dispositivo pelo **hash do código** antes de saber o tenant (D-327). Busca uma linha só; a gravação do pareamento roda com `withTenant()` |
 | **Autenticação do dispositivo de captura** | `/capture/*` acha o dispositivo pelo **hash da credencial** do cookie — o equivalente ao Login, para o celular (D-327). Daí em diante, `withTenant()` |
 | **Agendador de expiração das digitalizações** | lista **só os `tenant_id`** com `scans` vencidas; o `DELETE` e a remoção do arquivo de cada tenant rodam com `withTenant()` (D-327) |
+| **Agendador da curva ABC dos médicos** | lista **só os `tenant_id`** que têm médico; o cálculo e a gravação de cada tenant rodam com `withTenant()` (D-328) |
 
 Nenhum outro caminho de código deve usar `withoutTenant()`.
 
@@ -2682,6 +2820,8 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `proposal_reminders` | ✅ | migração `056_proposal_reminders.sql` (tabela + policy no mesmo arquivo — CRMLAB-102), `tests/db/rls-proposal-reminders.spec.ts` |
 | `capture_devices` | ✅ | migração `069_scans.sql` (tabela + policy no mesmo arquivo — CRMLAB-184), `tests/db/rls-scans.spec.ts` |
 | `scans` | ✅ | idem |
+| `doctor_specialties` | ✅ | migração `070_doctor_profile_expanded.sql` (tabela + policy no mesmo arquivo — CRMLAB-188), `tests/doctors/doctor-specialties.spec.ts` |
+| `visit_purposes` | ✅ | migração `073_visit_purposes.sql` (tabela + policy no mesmo arquivo — CRMLAB-190), `tests/db/migration-073-visit-purposes.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**
@@ -2815,7 +2955,9 @@ migrations/
 ├── 055_internal_message_attachments.sql # internal_message_attachments + policy — anexo do chat interno (CRMLAB-101, D-271)
 ├── 056_proposal_reminders.sql    # proposal_reminders + policy — lembrete de proposta parada (CRMLAB-102, D-272)
 ├── 059_user_presence_status.sql  # users.presence_status — status escolhido da atendente (CRMLAB-120, D-286)
-└── 060_conversations_patient_name_sync.sql # só dados: patient_name da conversa = nome do cadastro (CRMLAB-124, D-292)
+├── 060_conversations_patient_name_sync.sql # só dados: patient_name da conversa = nome do cadastro (CRMLAB-124, D-292)
+├── 070_doctor_profile_expanded.sql # doctor_specialties + policy, colunas novas em doctors, proposals.doctor_id (CRMLAB-188, D-328)
+└── 071_doctor_profile_backfill.sql # só dados: especialidades, secretária e vínculo proposta↔médico (CRMLAB-188, D-328)
 ```
 
 A 007 e a 008 são arquivos ÚNICOS (tabela + policy), diferente dos pares 003/004 e 005/006: a

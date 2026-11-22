@@ -27,7 +27,7 @@ export const MAX_PAGE = 10_000;
 
 const MANAGER_ROLES = ['manager', 'admin'] as const;
 /** Papeis de laboratorio validos para ligar a um atendente (API_CONTRACTS.md §12). */
-const LAB_ROLES = ['attendant', 'manager', 'admin'];
+const LAB_ROLES = ['attendant', 'representative', 'manager', 'admin'];
 
 export interface AttendantService {
   list(ctx: TenantContext, query: ListAttendantsQuery): Promise<ListAttendantsResponse>;

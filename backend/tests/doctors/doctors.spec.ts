@@ -3,8 +3,8 @@
  *
  * Foco: validacao e normalizacao de CRM/UF, unicidade (tenant, CRM, UF) com o
  * codigo proprio `DOCTOR_CRM_ALREADY_EXISTS`, responsavel do MESMO laboratorio,
- * isolamento multitenant (medico de outro tenant -> 404, nunca 403), todos os
- * papeis escrevem e o audit log de criar/editar/inativar/reativar.
+ * isolamento multitenant (medico de outro tenant -> 404, nunca 403), representante,
+ * gestor e admin escrevem (D-329) e o audit log de criar/editar/inativar/reativar.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { ApiErrorBody, Doctor, DoctorCrmConflictDetails, ListDoctorsResponse } from '@crm-lab/shared';
@@ -23,8 +23,8 @@ let tenantA: TenantRecord;
 let tenantB: TenantRecord;
 let adminA: UserRecord;
 let managerA: UserRecord;
-let attendantA: UserRecord;
-let attendantB: UserRecord;
+let repA: UserRecord;
+let repB: UserRecord;
 
 beforeAll(async () => {
   db = await getTestDb();
@@ -37,8 +37,8 @@ beforeEach(async () => {
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
   adminA = await createUser({ tenantId: tenantA.id, role: 'admin', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', name: 'Gestora Ana', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', db });
-  attendantB = await createUser({ tenantId: tenantB.id, role: 'attendant', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', db });
+  repB = await createUser({ tenantId: tenantB.id, role: 'representative', db });
 });
 
 async function create(user: UserRecord, body: Record<string, unknown>) {
@@ -96,10 +96,10 @@ describe('guardas de acesso', () => {
     }
   });
 
-  it('atendente, gestor e admin cadastram, editam e inativam (sem perfil novo)', async () => {
-    for (const user of [attendantA, managerA, adminA]) {
-      const doctor = await createOk(user, { name: `Dr. ${user.role}` });
-      await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(user)).send({ specialty: 'Clínica' }).expect(200);
+  it('representante, gestor e admin cadastram, editam e inativam (D-329)', async () => {
+    for (const user of [repA, managerA, adminA]) {
+      const doctor = await createOk(user, { name: `Dr. ${user.role}`, responsibleId: user.id });
+      await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(user)).send({ clinic: 'Clínica' }).expect(200);
       await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(user)).expect(200);
       await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(user)).expect(200);
     }
@@ -108,15 +108,14 @@ describe('guardas de acesso', () => {
 
 describe('POST /doctors — validação e normalização', () => {
   it('201 com o objeto cru; CRM só dígitos, UF maiúscula, vazio vira null', async () => {
-    const doctor = await createOk(attendantA, {
+    const doctor = await createOk(repA, {
       name: '  Dra. Júlia Costa ',
       crm: 'CRM 12.345',
       crmUf: ' sc',
-      specialty: 'Ginecologia',
       clinic: 'Clínica Vida',
       phone: '(48) 99999-0000',
       email: 'julia@clinica.com.br',
-      contactName: 'Marta (secretária)',
+      secretaryName: 'Marta (secretária)',
       visitPreference: 'Terças à tarde',
       notes: '   ',
       address: '',
@@ -125,67 +124,74 @@ describe('POST /doctors — validação e normalização', () => {
       name: 'Dra. Júlia Costa',
       crm: '12345',
       crmUf: 'SC',
-      specialty: 'Ginecologia',
+      specialty: null,
       clinic: 'Clínica Vida',
       phone: '(48) 99999-0000',
       email: 'julia@clinica.com.br',
+      secretaryName: 'Marta (secretária)',
+      // Espelho deprecado (coluna antiga, escrita dupla — D-328 item 8).
       contactName: 'Marta (secretária)',
       visitPreference: 'Terças à tarde',
       notes: null,
       address: null,
-      responsible: null,
+      responsible: { id: repA.id, name: repA.name },
       isActive: true,
     });
     expect(doctor).not.toHaveProperty('doctors');
   });
 
   it('só o nome é obrigatório', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. Sem CRM' });
+    const doctor = await createOk(repA, { name: 'Dr. Sem CRM' });
     expect(doctor.crm).toBeNull();
     expect(doctor.crmUf).toBeNull();
 
-    const semNome = await create(attendantA, { name: '   ' });
+    const semNome = await create(repA, { name: '   ' });
     expect(semNome.status).toBe(400);
     expect(errorOf(semNome).code).toBe('VALIDATION_ERROR');
   });
 
   it('CRM sem UF -> 400 em crmUf', async () => {
-    const response = await create(attendantA, { name: 'Dr. X', crm: '123' });
+    const response = await create(repA, { name: 'Dr. X', crm: '123' });
     expect(response.status).toBe(400);
     expect(errorOf(response).details).toMatchObject({ fields: { crmUf: 'Informe a UF do CRM' } });
   });
 
   it('UF fora das 27 -> 400 em crmUf', async () => {
-    const response = await create(attendantA, { name: 'Dr. X', crm: '123', crmUf: 'XX' });
+    const response = await create(repA, { name: 'Dr. X', crm: '123', crmUf: 'XX' });
     expect(response.status).toBe(400);
     expect(errorOf(response).details).toMatchObject({ fields: { crmUf: 'UF inválida' } });
   });
 
   it('CRM com mais de 10 dígitos -> 400 em crm', async () => {
-    const response = await create(attendantA, { name: 'Dr. X', crm: '12345678901', crmUf: 'SC' });
+    const response = await create(repA, { name: 'Dr. X', crm: '12345678901', crmUf: 'SC' });
     expect(response.status).toBe(400);
     expect(errorOf(response).details).toMatchObject({ fields: { crm: expect.any(String) } });
   });
 
   it('e-mail inválido -> 400; e-mail vazio é aceito como "sem e-mail"', async () => {
-    const ruim = await create(attendantA, { name: 'Dr. X', email: 'nao-e-email' });
+    const ruim = await create(repA, { name: 'Dr. X', email: 'nao-e-email' });
     expect(ruim.status).toBe(400);
     expect(errorOf(ruim).code).toBe('VALIDATION_ERROR');
 
-    const vazio = await createOk(attendantA, { name: 'Dr. Y', email: '' });
+    const vazio = await createOk(repA, { name: 'Dr. Y', email: '' });
     expect(vazio.email).toBeNull();
   });
 
   it('campo desconhecido (ex.: isActive) -> 400', async () => {
-    const response = await create(attendantA, { name: 'Dr. X', isActive: false });
+    const response = await create(repA, { name: 'Dr. X', isActive: false });
     expect(response.status).toBe(400);
   });
 });
 
 describe('unicidade de (tenant, CRM, UF)', () => {
   it('mesmo CRM e UF -> 409 DOCTOR_CRM_ALREADY_EXISTS com o médico existente', async () => {
-    const first = await createOk(attendantA, { name: 'Dr. Primeiro', crm: '12345', crmUf: 'SC' });
-    const response = await create(managerA, { name: 'Dr. Segundo', crm: '12.345', crmUf: 'sc' });
+    const first = await createOk(repA, { name: 'Dr. Primeiro', crm: '12345', crmUf: 'SC' });
+    const response = await create(managerA, {
+      name: 'Dr. Segundo',
+      crm: '12.345',
+      crmUf: 'sc',
+      responsibleId: managerA.id,
+    });
 
     expect(response.status).toBe(409);
     const error = errorOf(response);
@@ -198,39 +204,39 @@ describe('unicidade de (tenant, CRM, UF)', () => {
   });
 
   it('duplicidade vale contra médico INATIVO (o caminho é reativar)', async () => {
-    const first = await createOk(attendantA, { name: 'Dr. Inativo', crm: '777', crmUf: 'PR' });
-    await app.agent.post(`${BASE}/${first.id}/inactivate`).set(app.auth(attendantA)).expect(200);
+    const first = await createOk(repA, { name: 'Dr. Inativo', crm: '777', crmUf: 'PR' });
+    await app.agent.post(`${BASE}/${first.id}/inactivate`).set(app.auth(repA)).expect(200);
 
-    const response = await create(attendantA, { name: 'Dr. Novo', crm: '777', crmUf: 'PR' });
+    const response = await create(repA, { name: 'Dr. Novo', crm: '777', crmUf: 'PR' });
     expect(response.status).toBe(409);
     expect((errorOf(response).details as unknown as DoctorCrmConflictDetails).existingDoctor.isActive).toBe(false);
   });
 
   it('mesmo CRM em outra UF, outro tenant ou vários sem CRM: tudo permitido', async () => {
-    await createOk(attendantA, { name: 'Dr. SC', crm: '555', crmUf: 'SC' });
-    await createOk(attendantA, { name: 'Dr. RS', crm: '555', crmUf: 'RS' });
-    await createOk(attendantB, { name: 'Dr. SC do Lab B', crm: '555', crmUf: 'SC' });
-    await createOk(attendantA, { name: 'Dr. Sem CRM 1' });
-    await createOk(attendantA, { name: 'Dr. Sem CRM 2' });
+    await createOk(repA, { name: 'Dr. SC', crm: '555', crmUf: 'SC' });
+    await createOk(repA, { name: 'Dr. RS', crm: '555', crmUf: 'RS' });
+    await createOk(repB, { name: 'Dr. SC do Lab B', crm: '555', crmUf: 'SC' });
+    await createOk(repA, { name: 'Dr. Sem CRM 1' });
+    await createOk(repA, { name: 'Dr. Sem CRM 2' });
   });
 
   it('PATCH para um CRM já usado -> 409; manter o próprio CRM não conflita', async () => {
-    await createOk(attendantA, { name: 'Dr. Dono', crm: '100', crmUf: 'SC' });
-    const other = await createOk(attendantA, { name: 'Dr. Outro', crm: '200', crmUf: 'SC' });
+    await createOk(repA, { name: 'Dr. Dono', crm: '100', crmUf: 'SC' });
+    const other = await createOk(repA, { name: 'Dr. Outro', crm: '200', crmUf: 'SC' });
 
-    const clash = await app.agent.patch(`${BASE}/${other.id}`).set(app.auth(attendantA)).send({ crm: '100' });
+    const clash = await app.agent.patch(`${BASE}/${other.id}`).set(app.auth(repA)).send({ crm: '100' });
     expect(clash.status).toBe(409);
     expect(errorOf(clash).code).toBe('DOCTOR_CRM_ALREADY_EXISTS');
 
     await app.agent
       .patch(`${BASE}/${other.id}`)
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ crm: '200', crmUf: 'SC', name: 'Dr. Outro Renomeado' })
       .expect(200);
   });
 
   it('o índice único parcial segura a corrida mesmo sem passar pelo service', async () => {
-    await createOk(attendantA, { name: 'Dr. A', crm: '900', crmUf: 'SC' });
+    await createOk(repA, { name: 'Dr. A', crm: '900', crmUf: 'SC' });
     await expect(
       db.withTenant(tenantA.id, (tx) =>
         tx.query(`INSERT INTO doctors (tenant_id, name, crm, crm_uf) VALUES ($1, 'Dr. B', '900', 'SC')`, [
@@ -243,63 +249,63 @@ describe('unicidade de (tenant, CRM, UF)', () => {
 
 describe('PATCH /doctors/:id', () => {
   it('parcial: CRM com a UF que já existe; null limpa campo; CRM null limpa o par', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. P', crm: '1', crmUf: 'SC', specialty: 'Cardio' });
+    const doctor = await createOk(repA, { name: 'Dr. P', crm: '1', crmUf: 'SC', clinic: 'Cardio' });
 
-    const novoCrm = await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(attendantA)).send({ crm: '2' });
+    const novoCrm = await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(repA)).send({ crm: '2' });
     expect((novoCrm.body as Doctor).crmUf).toBe('SC');
 
     const limpo = await app.agent
       .patch(`${BASE}/${doctor.id}`)
-      .set(app.auth(attendantA))
-      .send({ specialty: null, crm: null, crmUf: null })
+      .set(app.auth(repA))
+      .send({ clinic: null, crm: null, crmUf: null })
       .expect(200);
-    expect(limpo.body as Doctor).toMatchObject({ specialty: null, crm: null, crmUf: null });
+    expect(limpo.body as Doctor).toMatchObject({ clinic: null, crm: null, crmUf: null });
   });
 
   it('isActive no PATCH -> 400 (inativar tem rota própria)', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. P' });
-    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(attendantA)).send({ isActive: false }).expect(400);
+    const doctor = await createOk(repA, { name: 'Dr. P' });
+    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(repA)).send({ isActive: false }).expect(400);
   });
 });
 
 describe('responsável pela carteira', () => {
   it('usuário ativo do laboratório: aceito e devolvido com o nome', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. R', responsibleId: managerA.id });
+    const doctor = await createOk(adminA, { name: 'Dr. R', responsibleId: managerA.id });
     expect(doctor.responsible).toEqual({ id: managerA.id, name: 'Gestora Ana' });
   });
 
   it('usuário de OUTRO laboratório -> 400 em responsibleId (nunca grava)', async () => {
-    const response = await create(attendantA, { name: 'Dr. R', responsibleId: attendantB.id });
+    const response = await create(repA, { name: 'Dr. R', responsibleId: repB.id });
     expect(response.status).toBe(400);
     expect(errorOf(response).details).toMatchObject({ fields: { responsibleId: expect.any(String) } });
   });
 
   it('usuário inativo -> 400; mas o médico já ligado a ele segue editável', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. R', responsibleId: attendantA.id });
-    const inativa = await createUser({ tenantId: tenantA.id, role: 'attendant', isActive: false, db });
+    const doctor = await createOk(repA, { name: 'Dr. R', responsibleId: repA.id });
+    const inativa = await createUser({ tenantId: tenantA.id, role: 'representative', isActive: false, db });
 
-    const response = await create(attendantA, { name: 'Dr. S', responsibleId: inativa.id });
+    const response = await create(repA, { name: 'Dr. S', responsibleId: inativa.id });
     expect(response.status).toBe(400);
 
-    await db.withoutTenant((tx) => tx.query('UPDATE users SET is_active = FALSE WHERE id = $1', [attendantA.id]));
+    await db.withoutTenant((tx) => tx.query('UPDATE users SET is_active = FALSE WHERE id = $1', [repA.id]));
     await app.agent
       .patch(`${BASE}/${doctor.id}`)
       .set(app.auth(managerA))
-      .send({ name: 'Dr. R2', responsibleId: attendantA.id })
+      .send({ name: 'Dr. R2', responsibleId: repA.id })
       .expect(200);
   });
 });
 
 describe('GET /doctors — busca, filtros e paginação', () => {
   beforeEach(async () => {
-    await createOk(attendantA, { name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', responsibleId: managerA.id });
-    await createOk(attendantA, { name: 'Dr. Marcos Lima', crm: '67890', crmUf: 'SC' });
-    const inativo = await createOk(attendantA, { name: 'Dr. Antônio Inativo', responsibleId: managerA.id });
-    await app.agent.post(`${BASE}/${inativo.id}/inactivate`).set(app.auth(attendantA)).expect(200);
+    await createOk(managerA, { name: 'Dra. Júlia Costa', crm: '12345', crmUf: 'SC', responsibleId: managerA.id });
+    await createOk(repA, { name: 'Dr. Marcos Lima', crm: '67890', crmUf: 'SC' });
+    const inativo = await createOk(managerA, { name: 'Dr. Antônio Inativo', responsibleId: managerA.id });
+    await app.agent.post(`${BASE}/${inativo.id}/inactivate`).set(app.auth(managerA)).expect(200);
   });
 
   async function list(query: Record<string, string | number | boolean>) {
-    const response = await app.agent.get(BASE).query(query).set(app.auth(attendantA)).expect(200);
+    const response = await app.agent.get(BASE).query(query).set(app.auth(managerA)).expect(200);
     return response.body as ListDoctorsResponse;
   }
 
@@ -333,8 +339,8 @@ describe('GET /doctors — busca, filtros e paginação', () => {
 
 describe('isolamento multitenant', () => {
   it('médico do tenant B: GET, PATCH, inativar e reativar -> 404 NOT_FOUND', async () => {
-    const doctorB = await createOk(attendantB, { name: 'Dr. Confidencial B', crm: '1', crmUf: 'SC' });
-    const headers = app.auth(attendantA);
+    const doctorB = await createOk(repB, { name: 'Dr. Confidencial B', crm: '1', crmUf: 'SC' });
+    const headers = app.auth(repA);
     const responses = [
       await app.agent.get(`${BASE}/${doctorB.id}`).set(headers),
       await app.agent.patch(`${BASE}/${doctorB.id}`).set(headers).send({ name: 'Hack' }),
@@ -347,27 +353,27 @@ describe('isolamento multitenant', () => {
       expect(JSON.stringify(res.body)).not.toContain('Confidencial');
     }
 
-    const intact = await app.agent.get(`${BASE}/${doctorB.id}`).set(app.auth(attendantB)).expect(200);
+    const intact = await app.agent.get(`${BASE}/${doctorB.id}`).set(app.auth(repB)).expect(200);
     expect(intact.body as Doctor).toMatchObject({ name: 'Dr. Confidencial B', isActive: true });
   });
 
   it('listagem nunca cruza tenant, nem filtrando pelo responsável do outro', async () => {
-    await createOk(attendantB, { name: 'Dr. Confidencial B', responsibleId: attendantB.id });
-    await createOk(attendantA, { name: 'Dr. do A' });
+    await createOk(repB, { name: 'Dr. Confidencial B', responsibleId: repB.id });
+    await createOk(repA, { name: 'Dr. do A' });
 
-    const all = await app.agent.get(BASE).set(app.auth(attendantA)).expect(200);
+    const all = await app.agent.get(BASE).set(app.auth(repA)).expect(200);
     expect((all.body as ListDoctorsResponse).doctors.map((d) => d.name)).toEqual(['Dr. do A']);
 
     const cross = await app.agent
       .get(BASE)
-      .query({ responsibleId: attendantB.id })
-      .set(app.auth(attendantA))
+      .query({ responsibleId: repB.id })
+      .set(app.auth(repA))
       .expect(200);
     expect((cross.body as ListDoctorsResponse).doctors).toHaveLength(0);
   });
 
   it('RLS: contexto de A não vê nem altera linha de B', async () => {
-    const doctorB = await createOk(attendantB, { name: 'Dr. B' });
+    const doctorB = await createOk(repB, { name: 'Dr. B' });
     const visible = await db.withTenant(tenantA.id, (tx) => tx.query('SELECT id FROM doctors'));
     expect(visible.rows).toHaveLength(0);
 
@@ -385,19 +391,19 @@ describe('isolamento multitenant', () => {
   });
 
   it('id inexistente -> 404; id não-uuid -> 400', async () => {
-    await app.agent.get(`${BASE}/${UNKNOWN_ID}`).set(app.auth(attendantA)).expect(404);
-    await app.agent.get(`${BASE}/nao-e-uuid`).set(app.auth(attendantA)).expect(400);
+    await app.agent.get(`${BASE}/${UNKNOWN_ID}`).set(app.auth(repA)).expect(404);
+    await app.agent.get(`${BASE}/nao-e-uuid`).set(app.auth(repA)).expect(400);
   });
 });
 
 describe('inativar / reativar', () => {
   it('idempotente: segunda chamada devolve 200 sem novo audit', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. I' });
-    const first = await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(attendantA)).expect(200);
+    const doctor = await createOk(repA, { name: 'Dr. I' });
+    const first = await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(repA)).expect(200);
     expect((first.body as Doctor).isActive).toBe(false);
-    await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(attendantA)).expect(200);
-    await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(attendantA)).expect(200);
-    await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(attendantA)).expect(200);
+    await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(repA)).expect(200);
+    await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(repA)).expect(200);
+    await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(repA)).expect(200);
 
     const actions = (await auditOf(doctor.id)).map((row) => row.action);
     expect(actions.filter((a) => a === 'inactivate_doctor')).toHaveLength(1);
@@ -407,14 +413,14 @@ describe('inativar / reativar', () => {
 
 describe('audit log', () => {
   it('create_doctor, update_doctor (só o que mudou), inactivate_doctor e reactivate_doctor', async () => {
-    const doctor = await createOk(attendantA, { name: 'Dr. Audit', crm: '42', crmUf: 'SC' });
+    const doctor = await createOk(repA, { name: 'Dr. Audit', crm: '42', crmUf: 'SC' });
     await app.agent
       .patch(`${BASE}/${doctor.id}`)
       .set(app.auth(managerA))
-      .send({ name: 'Dr. Audit', specialty: 'Pediatria', responsibleId: managerA.id })
+      .send({ name: 'Dr. Audit', clinic: 'Pediatria', responsibleId: managerA.id })
       .expect(200);
     // PATCH sem mudança real não gera audit.
-    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(managerA)).send({ specialty: 'Pediatria' }).expect(200);
+    await app.agent.patch(`${BASE}/${doctor.id}`).set(app.auth(managerA)).send({ clinic: 'Pediatria' }).expect(200);
     await app.agent.post(`${BASE}/${doctor.id}/inactivate`).set(app.auth(adminA)).expect(200);
     await app.agent.post(`${BASE}/${doctor.id}/reactivate`).set(app.auth(adminA)).expect(200);
 
@@ -425,13 +431,13 @@ describe('audit log', () => {
     for (const row of rows) expect(row.tenant_id).toBe(tenantA.id);
 
     const created = rows.find((r) => r.action === 'create_doctor');
-    expect(created?.user_id).toBe(attendantA.id);
+    expect(created?.user_id).toBe(repA.id);
     expect(created?.new_values).toMatchObject({ name: 'Dr. Audit', crm: '42', crmUf: 'SC' });
 
     const updated = rows.find((r) => r.action === 'update_doctor');
     expect(updated?.user_id).toBe(managerA.id);
-    expect(updated?.old_values).toEqual({ specialty: null, responsibleId: null });
-    expect(updated?.new_values).toEqual({ specialty: 'Pediatria', responsibleId: managerA.id });
+    expect(updated?.old_values).toEqual({ clinic: null, responsibleId: repA.id });
+    expect(updated?.new_values).toEqual({ clinic: 'Pediatria', responsibleId: managerA.id });
 
     expect(rows.find((r) => r.action === 'inactivate_doctor')?.new_values).toEqual({ isActive: false });
   });

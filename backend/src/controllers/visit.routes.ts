@@ -4,7 +4,7 @@
  *   GET   /api/v1/visits                     visitas de um periodo (from/to + filtros)
  *   GET   /api/v1/visits/:id                 uma visita, com o historico de datas
  *   POST  /api/v1/visits                     agenda
- *   PATCH /api/v1/visits/:id                 edita medico/responsavel/tipo/pauta (parcial)
+ *   PATCH /api/v1/visits/:id                 edita medico/responsavel/tipo/finalidade/pauta (parcial)
  *   POST  /api/v1/visits/:id/reschedule      muda a data/hora e grava o historico
  *   POST  /api/v1/visits/:id/cancel          cancela (motivo obrigatorio)
  *   POST  /api/v1/visits/:id/not-received    "medico nao recebeu" (motivo obrigatorio)
@@ -17,8 +17,9 @@
  *   GET    /api/v1/visits/:id/attachments/:attachmentId      baixa
  *   DELETE /api/v1/visits/:id/attachments/:attachmentId      exclui
  *
- * TODAS para qualquer papel de laboratorio (resposta 2A do epico CRMLAB-85).
- * Sem DELETE: visita se cancela.
+ * TODAS exigem representante, gestor ou admin (D-329; a atendente recebe 403).
+ * O representante so alcanca visita de medico da carteira dele ou em que ele e
+ * o responsavel (o service recorta; fora -> 404). Sem DELETE: visita se cancela.
  *
  * Controller fino (CONVENTIONS.md): valida o DTO, chama o service, responde.
  * `tenantId` vem SEMPRE de `getContext(req)` — nunca de query/body/header.
@@ -32,6 +33,7 @@ import {
   VISIT_REPORT_MAX_LENGTH,
   VISIT_STATUSES,
   VISIT_TYPES,
+  VISITATION_ROLES,
   type CloseVisitRequest,
   type CreateVisitAttachmentRequest,
   type CreateVisitRequest,
@@ -46,7 +48,7 @@ import {
 } from '@crm-lab/shared';
 import type { ApiModule, ApiModuleDeps } from '../http/api-module.js';
 import { getContext } from '../http/context.js';
-import { denyPlatformOperator, requireAuth } from '../http/middleware/auth.js';
+import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { createAuditService } from '../services/audit.service.js';
 import { dispositionFor, servedMimeType } from './media.routes.js';
@@ -61,6 +63,7 @@ export const listVisitsQuerySchema = z.object({
   doctorId: z.uuid().optional(),
   responsibleId: z.uuid().optional(),
   status: z.enum(VISIT_STATUSES).optional(),
+  purposeId: z.uuid().optional(),
 });
 
 export const createVisitSchema = z
@@ -69,6 +72,7 @@ export const createVisitSchema = z
     responsibleId: z.uuid(),
     scheduledAt: isoDateTime,
     type: z.enum(VISIT_TYPES),
+    purposeId: z.uuid(),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
   })
   .strict();
@@ -79,6 +83,7 @@ export const updateVisitSchema = z
     doctorId: z.uuid().optional(),
     responsibleId: z.uuid().optional(),
     type: z.enum(VISIT_TYPES).optional(),
+    purposeId: z.uuid().optional(),
     agenda: z.string().max(VISIT_AGENDA_MAX_LENGTH).nullable().optional(),
   })
   .strict();
@@ -247,9 +252,9 @@ export function deleteVisitAttachment(service: VisitService): RequestHandler {
 export function visitModule(deps: ApiModuleDeps): ApiModule {
   const service = createVisitServiceFromDeps(deps);
   const router = Router();
-  // Sem `requireRoles`: todo papel de laboratorio escreve (D-256). O operador
-  // da plataforma fica de fora explicitamente (PAGES.md §11).
-  const guards = [requireAuth(), denyPlatformOperator()];
+  // D-329: representante, gestor e admin (a atendente recebe 403 por perfil). O
+  // operador da plataforma fica de fora antes (PAGES.md §11).
+  const guards = [requireAuth(), denyPlatformOperator(), requireRoles(...VISITATION_ROLES)];
   const idParam = validate(visitIdParamSchema, 'params');
   const closeBody = validate(closeVisitSchema, 'body');
 

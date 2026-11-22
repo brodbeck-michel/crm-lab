@@ -34,7 +34,7 @@ import { BusinessError } from '../http/errors.js';
 import { findStoredRules, upsertRules } from '../repositories/funnel-rules.repository.js';
 import type { AuditService } from './audit.service.js';
 
-const TENANT_ROLES = ['attendant', 'manager', 'admin'] as const;
+const TENANT_ROLES = ['attendant', 'representative', 'manager', 'admin'] as const;
 const WRITE_ROLES = ['manager', 'admin'] as const;
 
 type Json = Record<string, unknown>;

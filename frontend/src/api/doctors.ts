@@ -1,13 +1,24 @@
 import type {
   CreateDoctorInteractionRequest,
   CreateDoctorRequest,
+  CreateDoctorSpecialtyRequest,
   Doctor,
+  DoctorAbcRecalculation,
   DoctorInteraction,
+  DoctorSpecialty,
   DoctorTimelineQuery,
   DoctorTimelineResponse,
+  ListDoctorSpecialtiesQuery,
+  ListDoctorSpecialtiesResponse,
   UpdateDoctorInteractionRequest,
+  UpdateDoctorSpecialtyRequest,
+  DoctorLookupQuery,
+  DoctorLookupResponse,
+  ListDoctorPortfoliosResponse,
   ListDoctorsQuery,
   ListDoctorsResponse,
+  TransferDoctorsRequest,
+  TransferDoctorsResponse,
   UpdateDoctorRequest,
 } from '@crm-lab/shared';
 import { http } from './client';
@@ -15,8 +26,10 @@ import type { QueryParams } from './client';
 
 /**
  * `/doctors` — médicos solicitantes (docs/api/API_CONTRACTS.md §13, CRMLAB-86,
- * D-255). Todas as rotas valem para qualquer papel do laboratório: não há
- * controle de escrita a esconder por perfil.
+ * D-255). Desde D-329: representante (só a carteira dele — o servidor recorta),
+ * gestor e admin; a atendente recebe 403. Carteiras e transferência: gestor/admin.
+ * A lista de especialidades e o recálculo da curva ABC escrevem só gestor/admin
+ * (CRMLAB-188, D-328).
  */
 export const doctorsApi = {
   list: (query: ListDoctorsQuery = {}) => http.get<ListDoctorsResponse>('/doctors', query as QueryParams),
@@ -31,6 +44,13 @@ export const doctorsApi = {
 
   reactivate: (id: string) => http.post<Doctor>(`/doctors/${id}/reactivate`),
 
+  // Carteiras e transferência em lote (CRMLAB-189, D-329 — gestor/admin).
+  portfolios: () => http.get<ListDoctorPortfoliosResponse>('/doctors/portfolios'),
+  // Busca do formulário de proposta: todo papel, sem carteira (D-329 item 12).
+  lookup: (query: DoctorLookupQuery) => http.get<DoctorLookupResponse>('/doctors/lookup', { search: query.search, limit: query.limit }),
+
+  transfer: (body: TransferDoctorsRequest) => http.post<TransferDoctorsResponse>('/doctors/transfer', body),
+
   // Linha do tempo do médico (CRMLAB-89, D-261).
   timeline: (id: string, query: DoctorTimelineQuery = {}) =>
     http.get<DoctorTimelineResponse>(`/doctors/${id}/timeline`, query as QueryParams),
@@ -43,4 +63,15 @@ export const doctorsApi = {
 
   deleteInteraction: (id: string, interactionId: string) =>
     http.delete<void>(`/doctors/${id}/interactions/${interactionId}`),
+
+  // Especialidades e curva ABC (CRMLAB-188, D-328).
+  specialties: (query: ListDoctorSpecialtiesQuery = {}) =>
+    http.get<ListDoctorSpecialtiesResponse>('/doctors/specialties', query as QueryParams),
+
+  createSpecialty: (body: CreateDoctorSpecialtyRequest) => http.post<DoctorSpecialty>('/doctors/specialties', body),
+
+  updateSpecialty: (id: string, body: UpdateDoctorSpecialtyRequest) =>
+    http.patch<DoctorSpecialty>(`/doctors/specialties/${id}`, body),
+
+  recalculateAbc: () => http.post<DoctorAbcRecalculation>('/doctors/abc/recalculate'),
 };

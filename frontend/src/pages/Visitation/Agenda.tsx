@@ -9,12 +9,14 @@ import {
   type ListVisitsQuery,
   type Visit,
   type VisitDetail,
+  type VisitPurpose,
+  type VisitPurposeRef,
   type VisitStatus,
   type VisitType,
 } from '@crm-lab/shared';
 import { visitsApi } from '@/api/visits';
+import { useVisitPurposes } from '@/api/visit-purposes';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
 import { isApiError } from '@/api/client';
 import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys, queryScopes } from '@/api/query-keys';
@@ -36,7 +38,9 @@ import {
 } from './agenda-dates';
 import {
   AgendaButton,
+  PURPOSE_STYLES,
   PersonAvatar,
+  PurposeDot,
   STATUS_ORDER,
   STATUS_SHORT_LABELS,
   STATUS_STYLES,
@@ -50,6 +54,7 @@ import { AgendaWeek } from './AgendaWeek';
 import { AgendaList } from './AgendaList';
 import { AgendaRail, countByStatus, type RailAction } from './AgendaRail';
 import { AgendaMobile } from './AgendaMobile';
+import { useVisitationResponsibles } from './visitation-access';
 import {
   VisitAttachmentsSection,
   VisitCheckSection,
@@ -84,16 +89,19 @@ interface Filters {
   doctorId: string;
   /** Chips de status desligados. Vazio = todos ligados. */
   hidden: VisitStatus[];
+  /** Chips de finalidade desligados (ids) — CRMLAB-190, D-330. Vazio = todas ligadas. */
+  hiddenPurposes: string[];
 }
 
-const NO_FILTERS: Filters = { responsibleId: '', doctorId: '', hidden: [] };
+const NO_FILTERS: Filters = { responsibleId: '', doctorId: '', hidden: [], hiddenPurposes: [] };
 
 function applyFilters(visits: Visit[], filters: Filters): Visit[] {
   return visits.filter(
     (visit) =>
       (!filters.responsibleId || visit.responsible?.id === filters.responsibleId) &&
       (!filters.doctorId || visit.doctor.id === filters.doctorId) &&
-      !filters.hidden.includes(visit.status),
+      !filters.hidden.includes(visit.status) &&
+      !filters.hiddenPurposes.includes(visit.purpose.id),
   );
 }
 
@@ -101,8 +109,34 @@ function activeFilterCount(filters: Filters): number {
   return (
     (filters.responsibleId ? 1 : 0) +
     (filters.doctorId ? 1 : 0) +
-    (filters.hidden.length > 0 ? 1 : 0)
+    (filters.hidden.length > 0 ? 1 : 0) +
+    (filters.hiddenPurposes.length > 0 ? 1 : 0)
   );
+}
+
+/** Finalidade no chip do filtro, com a contagem da semana. */
+interface PurposeChip extends VisitPurposeRef {
+  count: number;
+}
+
+/**
+ * Chips de finalidade: as ativas do cadastro (na ordem dele) e as inativas que
+ * têm visita na semana. Sem o cadastro (erro/carregando), as da própria semana.
+ */
+function purposeChips(purposes: VisitPurpose[], weekVisits: Visit[]): PurposeChip[] {
+  const counts = new Map<string, number>();
+  const seen = new Map<string, VisitPurposeRef>();
+  for (const visit of weekVisits) {
+    counts.set(visit.purpose.id, (counts.get(visit.purpose.id) ?? 0) + 1);
+    seen.set(visit.purpose.id, visit.purpose);
+  }
+  const chips: PurposeChip[] = purposes
+    .filter((p) => p.isActive || counts.has(p.id))
+    .map((p) => ({ id: p.id, name: p.name, color: p.color, count: counts.get(p.id) ?? 0 }));
+  for (const ref of seen.values()) {
+    if (!chips.some((chip) => chip.id === ref.id)) chips.push({ ...ref, count: counts.get(ref.id) ?? 0 });
+  }
+  return chips;
 }
 
 function weekRange(weekStart: Date): ListVisitsQuery {
@@ -184,12 +218,9 @@ export default function Agenda() {
     enabled: isWide && !isMobile && !todayInWeek,
   });
 
-  // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
-  });
-  const assignees = assigneesQuery.data?.assignees ?? [];
+  // Responsáveis elegíveis (D-329): gestor/admin escolhem entre representantes,
+  // gestores e admins; o representante só a si mesmo.
+  const { seesAll, responsibles: assignees } = useVisitationResponsibles();
 
   const doctorFilters = { active: true, limit: 100, sortBy: 'name' as const };
   const doctorsQuery = useQuery({
@@ -197,6 +228,9 @@ export default function Agenda() {
     queryFn: () => doctorsApi.list(doctorFilters),
   });
   const doctors = doctorsQuery.data?.doctors ?? [];
+
+  const purposesQuery = useVisitPurposes();
+  const purposes = useMemo(() => purposesQuery.data?.purposes ?? [], [purposesQuery.data]);
 
   const visible = useMemo(() => applyFilters(weekVisits, filters), [weekVisits, filters]);
   const todayVisits = useMemo(
@@ -210,6 +244,7 @@ export default function Agenda() {
     [todayInWeek, weekVisits, todayQuery.data, filters, now],
   );
   const counts = useMemo(() => countByStatus(weekVisits), [weekVisits]);
+  const chips = useMemo(() => purposeChips(purposes, weekVisits), [purposes, weekVisits]);
 
   // Visita selecionada: da semana, de "Hoje" ou (link de outra semana) buscada à parte.
   const listed = selectedId
@@ -256,7 +291,8 @@ export default function Agenda() {
     <FilterBar
       filters={filters}
       counts={counts}
-      assignees={assignees}
+      purposes={chips}
+      assignees={seesAll ? assignees : []}
       doctors={doctors}
       onChange={setFilters}
       stacked={isMobile}
@@ -271,6 +307,7 @@ export default function Agenda() {
           prefill={modal.prefill}
           assignees={assignees}
           doctors={doctors}
+          purposes={purposes}
           onClose={closeModal}
           onSaved={closeModal}
         />
@@ -280,6 +317,7 @@ export default function Agenda() {
           id={modal.id}
           assignees={assignees}
           doctors={doctors}
+          purposes={purposes}
           onClose={closeModal}
           onScheduleReturn={({ at, ...prefill }) => setModal({ kind: 'new', at, prefill })}
         />
@@ -505,6 +543,8 @@ function ViewSwitch({ value, onChange }: { value: View; onChange: (view: View) =
 interface FilterBarProps {
   filters: Filters;
   counts: Record<VisitStatus, number>;
+  /** Finalidades com a contagem da semana (CRMLAB-190). */
+  purposes: PurposeChip[];
   assignees: Person[];
   doctors: Person[];
   onChange: (filters: Filters) => void;
@@ -512,8 +552,16 @@ interface FilterBarProps {
   stacked: boolean;
 }
 
-/** Chips de status (filtro + legenda + contagem da semana), responsável e médico. */
-function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: FilterBarProps) {
+/** Chips de status e de finalidade (filtro + legenda + contagem da semana), responsável e médico. */
+function FilterBar({
+  filters,
+  counts,
+  purposes,
+  assignees,
+  doctors,
+  onChange,
+  stacked,
+}: FilterBarProps) {
   const divider = !stacked && (
     <span aria-hidden="true" className="h-5 w-px bg-agenda-line-control" />
   );
@@ -568,7 +616,53 @@ function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: F
         </div>
       </div>
       {divider}
-      <div className={group}>
+      {purposes.length > 0 && (
+        <>
+          <div className={group} role="group" aria-label="Finalidade">
+            {label('Finalidade')}
+            <div className="flex flex-wrap gap-sm">
+              {purposes.map((purpose) => {
+                const on = !filters.hiddenPurposes.includes(purpose.id);
+                return (
+                  <button
+                    key={purpose.id}
+                    type="button"
+                    aria-pressed={on}
+                    title={purpose.name}
+                    data-testid="purpose-chip"
+                    onClick={() =>
+                      onChange({
+                        ...filters,
+                        hiddenPurposes: on
+                          ? [...filters.hiddenPurposes, purpose.id]
+                          : filters.hiddenPurposes.filter((id) => id !== purpose.id),
+                      })
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-[6px] rounded-pill border px-[10px] py-[5px] text-body transition-opacity',
+                      'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
+                      on
+                        ? cn(
+                            'border-transparent',
+                            PURPOSE_STYLES[purpose.color].bg,
+                            PURPOSE_STYLES[purpose.color].ink,
+                          )
+                        : 'border-agenda-line-control bg-bg text-agenda-ink opacity-50',
+                    )}
+                  >
+                    <PurposeDot color={purpose.color} />
+                    {purpose.name}
+                    <span className="font-semibold tabular-nums">{purpose.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+      {/* Filtro por responsável só para gestor/admin (D-329): o representante já vem recortado. */}
+      {assignees.length > 0 && divider}
+      {assignees.length > 0 && <div className={group}>
         {label('Responsável')}
         {assignees.length <= MAX_RESPONSIBLE_CHIPS ? (
           <div className="flex flex-wrap gap-sm" role="group" aria-label="Filtrar por responsável">
@@ -603,7 +697,7 @@ function FilterBar({ filters, counts, assignees, doctors, onChange, stacked }: F
             onChange={(responsibleId) => onChange({ ...filters, responsibleId })}
           />
         )}
-      </div>
+      </div>}
       {divider}
       <div className={group}>
         {stacked && label('Médico')}
@@ -754,23 +848,39 @@ interface VisitFormModalProps {
   prefill?: Omit<ReturnVisitPrefill, 'at'>;
   assignees: Person[];
   doctors: Person[];
+  /** Cadastro inteiro; o seletor oferece só as ativas (+ a atual, se inativa). */
+  purposes: VisitPurpose[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-/** Criar (com data/hora) ou editar (médico, responsável, tipo, pauta — a data muda por "Reagendar"). */
+/** Ativas + a atual da visita (mesmo inativa), como `withCurrent` faz com médico/responsável. */
+function purposeOptions(purposes: VisitPurpose[], current: VisitPurposeRef | undefined) {
+  const list = purposes.filter((p) => p.isActive).map((p) => ({ value: p.id, label: p.name }));
+  if (current && !list.some((o) => o.value === current.id)) {
+    list.push({ value: current.id, label: `${current.name} (inativa)` });
+  }
+  return list;
+}
+
+/**
+ * Criar (com data/hora) ou editar (médico, responsável, finalidade, tipo, pauta
+ * — a data muda por "Reagendar").
+ */
 function VisitFormModal({
   visit,
   initialAt,
   prefill,
   assignees,
   doctors,
+  purposes,
   onClose,
   onSaved,
 }: VisitFormModalProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const user = useCurrentUser();
+  const { seesAll } = useVisitationResponsibles();
   const { fieldErrors, setFieldErrors, onError } = useFieldErrors();
   const isEdit = visit !== undefined;
   const at = initialAt ?? new Date();
@@ -785,6 +895,12 @@ function VisitFormModal({
   const [day, setDay] = useState(toDateInput(at));
   const [time, setTime] = useState(toTimeInput(at));
   const [type, setType] = useState<VisitType>(visit?.type ?? prefill?.type ?? 'presencial');
+  // "Agendar retorno" traz a finalidade da anterior só se ainda estiver ativa (D-330 item 4).
+  const [purposeId, setPurposeId] = useState(() => {
+    if (visit) return visit.purpose.id;
+    if (prefill && purposes.some((p) => p.id === prefill.purposeId && p.isActive)) return prefill.purposeId;
+    return '';
+  });
   const [agenda, setAgenda] = useState(visit?.agenda ?? '');
 
   const save = useMutation({
@@ -795,6 +911,7 @@ function VisitFormModal({
           doctorId,
           ...(responsibleId ? { responsibleId } : {}),
           type,
+          purposeId,
           agenda: agendaValue,
         });
       }
@@ -803,6 +920,7 @@ function VisitFormModal({
         responsibleId,
         scheduledAt: fromDateTimeInputs(day, time) ?? '',
         type,
+        purposeId,
         agenda: agendaValue,
       });
     },
@@ -819,6 +937,7 @@ function VisitFormModal({
     const errors: Record<string, string> = {};
     if (!doctorId) errors.doctorId = 'Escolha o médico';
     if (!isEdit && !responsibleId) errors.responsibleId = 'Escolha o responsável';
+    if (!purposeId) errors.purposeId = 'Escolha a finalidade';
     if (!isEdit && fromDateTimeInputs(day, time) === null)
       errors.scheduledAt = 'Informe data e hora';
     if (Object.keys(errors).length > 0) {
@@ -864,9 +983,19 @@ function VisitFormModal({
           label="Responsável"
           value={responsibleId}
           onChange={(e) => setResponsibleId(e.target.value)}
+          // D-329: o representante agenda só para si; o seletor vem fixo nele.
+          disabled={!seesAll && !isEdit}
           placeholder="Selecione o responsável"
           options={withCurrent(assignees, visit?.responsible, '(inativo)')}
           error={fieldErrors.responsibleId}
+        />
+        <Select
+          label="Finalidade"
+          value={purposeId}
+          onChange={(e) => setPurposeId(e.target.value)}
+          placeholder="Selecione a finalidade"
+          options={purposeOptions(purposes, visit?.purpose)}
+          error={fieldErrors.purposeId}
         />
         <Select
           label="Tipo"
@@ -918,6 +1047,7 @@ interface VisitModalProps {
   id: string;
   assignees: Person[];
   doctors: Person[];
+  purposes: VisitPurpose[];
   onClose: () => void;
   onScheduleReturn: (prefill: ReturnVisitPrefill) => void;
 }
@@ -926,7 +1056,14 @@ interface VisitModalProps {
  * Visita aberta: registro (check-in/out, CRMLAB-88), detalhe, relato, anexos e
  * histórico de datas; editar/reagendar/encerrar só enquanto `agendada`.
  */
-function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: VisitModalProps) {
+function VisitModal({
+  id,
+  assignees,
+  doctors,
+  purposes,
+  onClose,
+  onScheduleReturn,
+}: VisitModalProps) {
   const [mode, setMode] = useState<'view' | 'edit' | VisitAction>('view');
   const visitQuery = useQuery({ queryKey: queryKeys.visit(id), queryFn: () => visitsApi.get(id) });
   const visit = visitQuery.data;
@@ -937,6 +1074,7 @@ function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: Visit
         visit={visit}
         assignees={assignees}
         doctors={doctors}
+        purposes={purposes}
         onClose={() => setMode('view')}
         onSaved={() => setMode('view')}
       />
@@ -999,6 +1137,13 @@ function VisitModal({ id, assignees, doctors, onClose, onScheduleReturn }: Visit
 
           <dl className="grid grid-cols-1 gap-md text-body md:grid-cols-2">
             <Field label="Data/hora prevista" value={formatDateTime(visit.scheduledAt)} />
+            <div>
+              <dt className="text-caption font-semibold text-neutral-700">Finalidade</dt>
+              <dd className="flex items-center gap-[6px] text-text" data-testid="visit-purpose">
+                <PurposeDot color={visit.purpose.color} />
+                {visit.purpose.name}
+              </dd>
+            </div>
             <Field label="Tipo" value={VISIT_TYPE_LABELS[visit.type]} />
             <Field label="Responsável" value={visit.responsible?.name ?? '—'} />
             <Field label="Agendada por" value={visit.createdBy?.name ?? '—'} />

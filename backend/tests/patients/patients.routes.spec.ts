@@ -93,7 +93,7 @@ describe('guardas de acesso', () => {
     for (const res of responses) {
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe('FORBIDDEN');
-      expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'manager', 'admin']);
+      expect(res.body.error.details.requiredRoles).toEqual(['attendant', 'representative', 'manager', 'admin']);
     }
   });
 });

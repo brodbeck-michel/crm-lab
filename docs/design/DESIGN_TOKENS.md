@@ -304,6 +304,37 @@ só por cor: rótulo no chip/selo/lista e nome riscado no bloco (cancelada e nã
 responsável: `oklch(0.55 0.11 H)` com H por hash do id em 200/300/340/110/180 (fora dos matizes
 de status).
 
+> **Desde o CRMLAB-190 (D-330)** o bloco da Semana, a linha da Lista e o cartão do celular são
+> pintados pela **finalidade** (abaixo). As cores de status continuam nos chips de status, no
+> selo do detalhe e no resumo da semana; no bloco, o status vira ícone (`StatusIcon`).
+
+### Finalidade da visita (`--color-purpose-*`, CRMLAB-190, D-330)
+
+**Paleta fechada de 8 cores** que o laboratório escolhe ao cadastrar uma finalidade. O banco e a
+API guardam só a **chave** (`azul`…`cinza`), nunca hex; o mapa chave → classes mora em
+`pages/Visitation/agenda-ui.tsx` (`PURPOSE_STYLES`). Literais, iguais para todo tenant (o tema não
+mexe). Trio fundo / texto / ponto com a mesma regra das de status: mesma luminosidade e croma, só
+o matiz muda; texto ≥ 4,5:1 sobre o fundo (≈ 7:1), ponto ≥ 3:1 no branco.
+
+| Chave | Rótulo | Matiz (H) | Fundo `-bg` | Texto `-ink` | Ponto `-dot` |
+|---|---|---|---|---|---|
+| `azul` | Azul | 250 | `oklch(0.95 0.035 H)` | `oklch(0.38 0.09 H)` | `oklch(0.6 0.13 H)` |
+| `verde` | Verde | 150 | idem | idem | idem |
+| `agua` | Verde-água | 195 | idem | idem | idem |
+| `violeta` | Violeta | 300 | idem | idem | idem |
+| `ambar` | Âmbar | 75 | idem | idem | idem |
+| `rosa` | Rosa | 350 | idem | idem | idem |
+| `terracota` | Terracota | 40 | idem | idem | idem |
+| `cinza` | Cinza | 160 | `oklch(0.95 0.006 H)` | `oklch(0.38 0.015 H)` | `oklch(0.6 0.02 H)` |
+
+**Tema escuro:** os mesmos tokens estão redefinidos em `[data-theme='dark']` (fundo
+`oklch(0.33 0.06 H)`, texto `oklch(0.92 0.04 H)`, ponto `oklch(0.72 0.13 H)`; o cinza com croma
+≈ 0). Hoje o seletor não casa com nada — o produto não tem tema escuro —, mas a paleta já nasce
+legível nos dois.
+
+Tailwind: `purpose-<chave>-bg|ink|dot` (`bg-purpose-azul-bg`, `text-purpose-azul-ink`…). Cor nunca
+é a única pista: o nome da finalidade está escrito no bloco, na linha e no chip do filtro.
+
 ### Aplicação em CSS
 
 ```css

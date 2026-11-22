@@ -27,7 +27,7 @@ import * as repo from '../repositories/holiday.repository.js';
 import type { AuditService } from './audit.service.js';
 import { readBusinessHours } from './channel-settings.service.js';
 
-const TENANT_ROLES = ['attendant', 'manager', 'admin'] as const;
+const TENANT_ROLES = ['attendant', 'representative', 'manager', 'admin'] as const;
 const WRITE_ROLES = ['manager', 'admin'] as const;
 
 const DAY_MS = 24 * 60 * 60 * 1000;

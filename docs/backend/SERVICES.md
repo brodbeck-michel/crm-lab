@@ -1877,8 +1877,12 @@ atendente não lê `/settings/channels` e precisa do expediente para o alerta de
 ## 30. DoctorService — médicos solicitantes (CRMLAB-86 — D-255)
 
 **Responsabilidade:** as 6 rotas de `/doctors` (API_CONTRACTS.md §13). Dono de `doctors`
-(SCHEMA.md §35), base do épico Visitação Médica (CRMLAB-85). Todo papel de tenant escreve; o
-operador da plataforma fica na rota. Normaliza CRM (só dígitos) e UF (maiúscula, 27 UFs) com os
+(SCHEMA.md §35), base do épico Visitação Médica (CRMLAB-85). Desde D-329 a rota exige
+`representative`/`manager`/`admin` e o service recorta o **representante** à própria carteira
+(`ownerId` no repositório; fora dela → `NOT_FOUND`; cria sempre na própria carteira e não troca o
+responsável). Responsável obrigatório e de perfil elegível (`VISITATION_RESPONSIBLE_ROLES`). Também
+`portfolios(ctx)` (carteiras) e `transfer(ctx, dto)` (transferência em lote, só gestor/admin, uma
+transação; audit `transfer_doctor` e `transfer_visit`). Normaliza CRM (só dígitos) e UF (maiúscula, 27 UFs) com os
 helpers de `shared/types/doctor.types.ts`, valida o **par** depois de juntar com o que está gravado
 (PATCH), confere duplicidade de (CRM, UF) antes de gravar e converte a corrida do índice único
 (`uq_doctors_tenant_crm`) no mesmo `DOCTOR_CRM_ALREADY_EXISTS`. O responsável pela carteira é
@@ -1902,13 +1906,39 @@ Lê `users` (só `id, name, role, is_active` do próprio tenant) para validar o 
 `LEFT JOIN` do nome — leitura de apoio, sem escrever em tabela de outro domínio, mesmo padrão de
 `ProposalRepository.findTenantUser`.
 
+**CRMLAB-188 (D-328) — cadastro ampliado e curva ABC.** O `DoctorService` valida os campos novos
+(aniversário, consultas, valor, horário, parceria, CEP/UF, especialidade ativa) sobre o estado
+**depois** do merge com o gravado e faz a escrita dupla nas colunas antigas (`specialty` ← nome da
+especialidade, `contact_name` ← `secretaryName`). Dois services novos, no mesmo módulo `/doctors`:
+
+```typescript
+// backend/src/services/doctor-specialty.service.ts — dono de `doctor_specialties`
+export interface DoctorSpecialtyService {
+  list(ctx, query: ListDoctorSpecialtiesQuery): Promise<ListDoctorSpecialtiesResponse>; // semeia tenant vazio
+  create(ctx, dto: CreateDoctorSpecialtyRequest): Promise<DoctorSpecialty>;              // DOCTOR_SPECIALTY_ALREADY_EXISTS
+  update(ctx, id: string, dto: UpdateDoctorSpecialtyRequest): Promise<DoctorSpecialty>;  // NOT_FOUND, 409
+}
+
+// backend/src/services/doctor-abc.service.ts — escreve só doctors.abc_*
+export interface DoctorAbcService {
+  recalculateTenant(tenantId: string, now?: Date): Promise<DoctorAbcRecalculation>;
+  recalculate(ctx: TenantContext): Promise<DoctorAbcRecalculation>;   // rota; audit recalculate_doctor_abc
+  runScheduledTick(): Promise<void>;                                  // main.ts, 24 h; nunca lança
+}
+```
+
+O `ProposalService` lê `doctors` (id, nome, ativo — do próprio tenant) para validar `doctorId`;
+leitura de apoio, como o responsável acima.
+
 ---
 
 ## 31. VisitService — agenda de visitas (CRMLAB-87 — D-256)
 
 **Responsabilidade:** as 13 rotas de `/visits` (API_CONTRACTS.md §14). Dono de `doctor_visits`,
-`doctor_visit_reschedules` (SCHEMA.md §36) e `doctor_visit_attachments` (§37). Todo papel de tenant escreve; o operador da plataforma
-fica na rota. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
+`doctor_visit_reschedules` (SCHEMA.md §36) e `doctor_visit_attachments` (§37). Desde D-329 a rota
+exige `representative`/`manager`/`admin`; o **representante** só alcança visita de médico da carteira
+dele ou em que ele é o responsável (`ownerId` no repositório, inclusive no download de anexo), e só
+cria/edita com médico da própria carteira e ele mesmo como responsável. Valida médico (ativo, do tenant) e responsável (usuário ativo do tenant, papel de
 tenant) só quando mudam; só a visita `agendada` edita, reagenda ou encerra (`VISIT_ALREADY_CLOSED`;
 a guarda vai também no `WHERE` do repositório, e uma escrita que perde a corrida relê para
 responder 404 ou 409). Reagendar grava o histórico na mesma transação. Audit `create_visit`,
@@ -1950,6 +1980,27 @@ depois o arquivo (arquivo ausente não é erro). Audit `check_in_visit`, `check_
 Lê `doctors` e `users` (só o do próprio tenant, com `tenant_id` explícito além do RLS) para validar
 e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro domínio.
 
+**Finalidade da visita (CRMLAB-190 — D-330).** `create` exige `purposeId` de finalidade **ativa**
+do tenant (`VisitPurposeRepository.findById`, com `tenant_id` explícito); `update` só revalida
+quando a finalidade **muda**. O `JOIN visit_purposes` devolve `purpose: { id, name, color }` em
+toda leitura; `list` aceita `purposeId`. `purposeId` entra no diff do audit.
+
+**VisitPurposeService** (`services/visit-purpose.service.ts`) — dono de `visit_purposes`
+(SCHEMA.md §36a), rotas `/settings/visit-purposes` (API_CONTRACTS.md §14, "Finalidades da
+visita"). Leitura para todo papel de tenant; escrita só `manager`/`admin` (na rota e no service).
+Nome único no tenant (sem diferenciar maiúscula) → `VALIDATION_ERROR` em `fields.name`; cor só da
+paleta (`isVisitPurposeColor`). A semente dos laboratórios novos é do banco (trigger em
+`tenants`), não do service. Audit `create_visit_purpose`, `update_visit_purpose` (só o diff).
+
+```typescript
+// backend/src/services/visit-purpose.service.ts
+export interface VisitPurposeService {
+  list(ctx: TenantContext): Promise<ListVisitPurposesResponse>;
+  create(ctx: TenantContext, dto: CreateVisitPurposeRequest): Promise<VisitPurpose>;             // FORBIDDEN, VALIDATION_ERROR
+  update(ctx: TenantContext, id: string, dto: UpdateVisitPurposeRequest): Promise<VisitPurpose>; // NOT_FOUND
+}
+```
+
 ---
 
 ## 32. DoctorInteractionService — linha do tempo do médico (CRMLAB-89 — D-261)
@@ -1959,7 +2010,8 @@ e para os nomes no `JOIN` — leitura de apoio, sem escrever em tabela de outro 
 juntando, na leitura, as visitas do médico (`doctor_visits`, do `VisitService`) com os registros
 manuais, do mais novo para o mais antigo, por **cursor** (`base64url("<ISO>|<id>")` do último item;
 lê `limit + 1` para saber se há próxima página). O trecho do relato (`reportExcerpt`) é cortado
-aqui, não no SQL. Registro manual: todo papel de tenant lança, edita e exclui; `occurredAt` até
+aqui, não no SQL. Registro manual: quem alcança o médico (gestor/admin; representante só na
+carteira dele, D-329) lança, edita e exclui; `occurredAt` até
 5 min no futuro (`DOCTOR_INTERACTION_FUTURE_TOLERANCE_MS`, relógio injetável no teste); descrição
 aparada, 1..2000. Médico do tenant (ativo **ou** inativo) é conferido antes; registro de outro
 médico no caminho → `NOT_FOUND` (o `WHERE` do repositório leva `doctor_id`). Audit

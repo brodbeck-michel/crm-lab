@@ -7343,3 +7343,223 @@ novo código e revogação de dispositivo são auditados (equivalem a dar/tirar 
 `POST /conversations/:id/attachments`, API_ERRORS (`CAPTURE_DEVICE_UNPAIRED`, `PAIRING_CODE_INVALID`),
 SECURITY.md "Dispositivo de captura", PAGES.md (`/digitalizar`, clipe "Digitalizações", seção em Canais &
 Equipe), SERVICES.md §36.
+
+### D-328: Cadastro de médico ampliado e curva ABC automática (CRMLAB-188)
+**Contexto:** a ficha do médico (CRMLAB-86/89) nasceu enxuta: especialidade, endereço, secretária e
+horário de visita em texto livre, e nenhuma ligação com a venda. O representante precisa de dados
+para planejar a visita (quando recebe, aniversário, quanto atende particular) e o gestor precisa
+saber quais médicos trazem receita. Escopo aprovado pelo dono do produto em 21/11/2026.
+**Decisão:**
+1. **Especialidade por lista do laboratório** (`doctor_specialties`, uma por tenant, RLS). Toda lista
+   começa com as especialidades mais comuns do CFM (`DEFAULT_DOCTOR_SPECIALTIES`): a migração 071
+   semeia os laboratórios que existem; laboratório criado depois é semeado na primeira leitura da
+   lista (`GET /doctors/specialties`, só quando o tenant não tem nenhuma). Nome único por laboratório
+   **sem acento, caixa e espaços repetidos** (`normalized_name`, `normalizeLookupName`); duplicado →
+   `409 DOCTOR_SPECIALTY_ALREADY_EXISTS`. Criar/renomear/inativar: **gestor e admin**; atendente só
+   escolhe. Sem `DELETE`: inativar (some do select de cadastro novo; quem já usa continua). O texto
+   antigo (`doctors.specialty`) foi migrado casando pelo nome normalizado; o que não casou virou
+   especialidade nova do laboratório. A coluna antiga **fica** (regra das 3 migrações) e recebe o nome
+   da especialidade a cada gravação (escrita dupla) até a migração que a remover.
+2. **Aniversário** do médico e da secretária: dia e mês andam juntos; ano opcional (≥ 1900, não
+   futuro). 29/02 sem ano vale.
+3. **Clínica:** `acceptsPrivate` é **nulável** (não informado ≠ "não atende" — médico antigo não ganha
+   um "não" que ninguém disse). Consultas/mês particulares ≤ total quando os dois existem; com
+   `acceptsPrivate = false`, particulares só pode ser vazio ou 0. Valor da consulta em decimal (≥ 0).
+4. **Horário para representante** estruturado: lista (até 14) de `{ weekdays, start, end }` em JSONB,
+   `start < end`, horário local `HH:MM`. Sem checagem de sobreposição (o representante lê, não o
+   sistema). O texto antigo `visit_preference` continua, rotulado "Observação de horário".
+5. **Parceria:** `isPartner` (padrão `false`), `partnerSince` (data, não futura) e anotações.
+6. **Endereço estruturado** (CEP, logradouro, número, complemento, bairro, cidade, UF). O CEP é
+   consultado no **ViaCEP direto do navegador** (`https://viacep.com.br/ws/{cep}/json/`) ao completar 8
+   dígitos: preenche só os campos vazios; erro, CEP inexistente ou rede fora → **silêncio**, a pessoa
+   digita. O backend não chama o ViaCEP (nada a cachear, sem dependência nova no servidor; o dado é
+   endereço de consultório, não de paciente). O endereço texto antigo é preservado e aparece na ficha
+   só quando os campos novos estão vazios.
+7. **WhatsApp clicável:** `https://wa.me/<55+DDD+número>` a partir do telefone digitado
+   (`toWhatsAppNumber`); telefone que não forma número brasileiro não vira link.
+8. **Secretária** em bloco próprio (nome, aniversário, telefone/WhatsApp, anotações). `contact_name`
+   foi copiado para `secretary_name` na 071 e segue sendo escrito junto (espelho; `contactName`
+   deprecado e só leitura na API). O contrato de escrita troca `specialty`/`contactName` por
+   `specialtyId`/`secretaryName` (o único consumidor é o próprio frontend, no mesmo commit).
+9. **Curva ABC automática**, sem edição manual:
+   - **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
+     transição). Base = soma de `total_price` das propostas `ganho` com `closed_at` nos **últimos 12
+     meses**, por `doctor_id`. `total_price` e não o líquido do LIS: é o número que o CRM controla
+     (regra §1) e existe em toda proposta.
+   - **Pareto:** ordena por base desc; o médico é **A** se o acumulado *antes* dele é < 80% do total,
+     **B** se < 95%, senão **C** (assim o maior vendedor é sempre A, mesmo concentrando 90%).
+     **Empate:** quem tem a mesma base fica com a classe do primeiro do grupo. Base 0 (sem venda) é
+     **C**; laboratório sem venda nenhuma → todos C. Médico inativo também é classificado.
+   - Grava `abc_class`, `abc_base_value` e `abc_calculated_at` no médico. O trigger de `updated_at`
+     de `doctors` passa a **ignorar** essas três colunas (o recálculo diário não pode fazer todo
+     médico parecer "editado hoje").
+   - Recalcula por **agendador no `main.ts`** (mesmo padrão dos demais: roda no boot e a cada 24 h,
+     `.unref()`, nunca lança; lista só os `tenant_id` com médico via `withoutTenant()`, o cálculo de
+     cada tenant roda com `withTenant()`) e por **`POST /doctors/abc/recalculate`** (gestor/admin,
+     audit `recalculate_doctor_abc`). O agendador não gera audit (dado derivado).
+10. **Proposta ganha `doctor_id`** (FK para `doctors`, `ON DELETE SET NULL`), escolhido no formulário
+    da proposta pela busca de médicos (nome/CRM). Só médico **ativo** do mesmo laboratório (outro
+    tenant ou inexistente → `VALIDATION_ERROR` em `doctorId`, sem dizer se existe). Com `doctorId` e
+    sem texto, `requestingDoctor` recebe o nome do médico. Editável onde o médico solicitante já era
+    (criação e `PATCH /proposals/:id/items`). **Backfill (071):** proposta sem vínculo casa com o
+    médico cujo **nome normalizado é exatamente** o `requesting_doctor` normalizado, no mesmo tenant,
+    contando ativos e inativos; 2+ médicos com o mesmo nome → **não vincula** (conservador).
+**Ambiguidades resolvidas pelo dev (conservador):** `acceptsPrivate` nulável; empate no Pareto sobe o
+grupo inteiro; inativos entram no cálculo; proposta já fechada não ganha vínculo pela tela (só pelo
+backfill), porque a edição da proposta é travada fora de `novo_contato`/`orcamento_enviado`.
+**Impacto:** SCHEMA §35/§51 (migrações 070 e 071), API_CONTRACTS §13 (campos novos, 4 rotas) e §3
+(`doctorId`), API_ERRORS (`DOCTOR_SPECIALTY_ALREADY_EXISTS`), BUSINESS_RULES §12b, PAGES §22/§22b e
+formulário de proposta, SERVICES §30.
+
+## 2026-11-21 — Finalidade da visita (CRMLAB-190, épico CRMLAB-187)
+
+### D-330: Finalidade da visita cadastrada por laboratório; a cor da agenda passa a ser da finalidade
+**Contexto:** a visita só tinha o **modo** do contato (`type`: presencial, online, telefone,
+evento) e a pauta em texto livre. O laboratório usa a agenda para coisas de natureza diferente
+(visita de propaganda, pedido de patrocínio, pedido de material, liberar acesso a exames,
+compromisso interno) e quer ver isso de longe na grade — e, mais tarde, num relatório. A D-262
+item 6 pintava o bloco pela cor do **status**.
+**Decisão (Michel, escopo aprovado do CRMLAB-190):**
+1. **Finalidade é cadastro do laboratório** (`visit_purposes`, por tenant): nome (até 60, único
+   no laboratório sem diferenciar maiúscula), **cor**, ativo/inativo e ordem. Sem exclusão:
+   inativa. Só **gestor e admin** criam e editam; todos os papéis do laboratório leem (a agenda
+   precisa).
+2. **Cor de uma paleta fixa de 8 tokens**, nunca hex no banco nem na API: a coluna guarda a
+   **chave** (`azul`, `verde`, `agua`, `violeta`, `ambar`, `rosa`, `terracota`, `cinza`) e o
+   front pinta com `--color-purpose-<chave>-bg|ink|dot` (DESIGN_TOKENS.md). Paleta fechada
+   garante contraste (texto ≥ 4,5:1 sobre o fundo) sem o laboratório escolher cor ilegível. Os
+   tons do tema escuro ficam declarados em `[data-theme='dark']` — inertes hoje (o produto não
+   tem tema escuro), prontos quando tiver.
+3. **Semente por laboratório:** Visita (azul), Solicitação de patrocínio (verde), Solicitação de
+   material (água), Acesso a exames (violeta) e Compromisso interno (cinza). A migração 073 semeia
+   os laboratórios que já existem; os novos recebem pelo **trigger** `AFTER INSERT ON tenants`
+   (`seed_visit_purposes`), que cobre o onboarding do console, os seeds e as factories de teste
+   sem cada caminho precisar lembrar. Idempotente (`ON CONFLICT DO NOTHING`).
+4. **`purposeId` obrigatório na visita** (`doctor_visits.purpose_id NOT NULL`): exigido no
+   `POST /visits`, editável no `PATCH` enquanto `agendada`. A migração dá **Visita** a todas as
+   visitas existentes. Finalidade **ativa e do mesmo laboratório** ao criar e ao **trocar**; a
+   visita que já tem uma finalidade depois inativada continua com ela, exibida e editável nos
+   outros campos (mesma regra do médico/responsável inativo, D-256). Inexistente, inativa ou de
+   outro laboratório → `VALIDATION_ERROR` com `fields.purposeId`.
+5. **Modo (`type`) continua** — responde "como", a finalidade responde "para quê".
+6. **A visita devolve `purpose: { id, name, color }`** (agenda, detalhe e a linha do tempo do
+   médico), para nenhuma tela precisar cruzar com o cadastro.
+7. **Agenda (revê a D-262 item 6):** o bloco da Semana, a linha da Lista e o cartão do celular
+   ganham a **cor da finalidade**. O status sai da cor e vira **selo com ícone e texto
+   acessível**: relógio = agendada, ✓ = realizada, ✕ = cancelada, ⊘ = médico não recebeu; e
+   cancelada/não recebeu continuam com o **nome riscado**, agora com **opacidade reduzida**. Texto
+   do bloco: "HH:MM Médico" e, abaixo, a finalidade. O **resumo da semana** (coluna lateral) e os
+   **chips de status** continuam pelas cores de status (`--color-visit-*`), que seguem existindo.
+8. **Filtro por finalidade:** chips de multisseleção (como os de status: todos ligados, clicar
+   desliga, com contagem da semana), aplicados na tela sobre a semana (D-262 item 4). O
+   `GET /visits` aceita também `purposeId` (uma finalidade) para quem consome a API direto.
+9. **Tela de gestão em Cadastros** (`/settings/visit-purposes`, aba "Finalidades", gestor+), como
+   Convênios e Atendentes — é cadastro do laboratório, não da agenda.
+**Auditoria:** `create_visit_purpose`, `update_visit_purpose` (`entityType: "visit_purpose"`);
+`purposeId` entra no diff da visita (`create_visit`/`update_visit`).
+**Impacto:** SCHEMA §36a (migração 073), API_CONTRACTS §14 (+ "Finalidades da visita"),
+BUSINESS_RULES §13, DESIGN_TOKENS (paleta de finalidade), PAGES §23 + Cadastros, SERVICES §31;
+`shared/types/visit-purpose.types.ts`, `visit.types.ts`, `doctor-timeline.types.ts`;
+`backend/src/{controllers,services,repositories}/visit-purpose.*`, `visit.*`,
+`doctor-interaction.repository.ts`; `frontend/src/pages/Settings/VisitPurposes.tsx`,
+`pages/Visitation/*`, `styles/tokens.css`, `tailwind.config.js`, `routes/`.
+
+## 2026-11-21 — Perfil Representante e carteira de médicos (CRMLAB-189, épico CRMLAB-187 Visitação v2)
+
+### D-329: Perfil `representative`, Visitação só para representante/gestor/admin e escopo por carteira
+**Contexto:** no MVP da Visitação (épico CRMLAB-85) qualquer papel do laboratório via e mexia em todos os
+médicos, visitas e registros (D-255 item 3, D-256 item 9, D-261 item 8). Na operação real quem visita é o
+**representante**, cada um com a sua carteira de médicos, e a atendente do WhatsApp não tem o que fazer na
+Visitação.
+**Decisão (escopo aprovado pelo dono do produto no card; itens 2, 8, 9, 10 e 11 decididos na implementação):**
+1. **Perfil novo `representative` ("Representante")** em `UserRole` e no `CHECK` de `users.role`
+   (migração 072, SCHEMA §52). O admin escolhe o perfil no cadastro/edição de usuários. Alçada de desconto
+   padrão **15%**, igual à da atendente (`DEFAULT_DISCOUNT_LIMIT`).
+2. **Fora da Visitação o representante é uma atendente.** Decidido item a item:
+   - Atendimento (WhatsApp), Contatos, Chat interno, Respostas rápidas, Exames (escrita do catálogo),
+     Regras (só leitura), feriados e templates da Meta: **igual à atendente**.
+   - Propostas: vê só as **próprias** (+ fila comum do Bitlab sem responsável), como a atendente (D-042,
+     D-195); repassar o cartão só para outro perfil de linha de frente (atendente ou representante).
+   - Regras do funil (`RuleActorRole`): o representante conta como **atendente** — não existe linha nova
+     na tela de Regras (`ruleActorRoleOf`).
+   - Vendas e Conversão: recorte **próprio**, como a atendente (D-112).
+   - Decisões, Resultados, Busca Ativa, Gestão da Operação, Canais & Equipe, Convênios, Atendentes,
+     Integração LIS, Usuários, Personalização: **fora**, como a atendente.
+   - Equipe (Canais & Equipe, Gestão da Operação, lista de responsáveis de conversa e proposta): o
+     representante **aparece**, como a atendente — ele pode atender conversa e ter proposta.
+   - **Tela inicial:** `/visitation/agenda` (a atendente continua em `/attendance`). É a única diferença
+     de navegação fora das permissões da Visitação.
+   - Helper único em `shared/types/auth.types.ts`: `isFrontlineRole(role)` (atendente **ou**
+     representante) substitui as comparações `role === 'attendant'` que significavam "linha de frente".
+3. **Atendente perde a Visitação inteira:** some do menu, as rotas do frontend redirecionam, e o backend
+   responde **`403 FORBIDDEN`** (`requiredRoles: ["representative","manager","admin"]`) em **todas** as rotas
+   de `/doctors` e `/visits` (médicos, visitas, registro, anexos, linha do tempo, interações, carteiras,
+   transferência). É recusa **por perfil**, por isso 403 e não 404.
+4. **Escopo do representante (backend, em todas as rotas da Visitação):**
+   - **Médico:** só os da **carteira** dele (`doctors.responsible_user_id = ele`). Fora disso → `404
+     NOT_FOUND` (lista, detalhe, edição, inativar/reativar, linha do tempo e registros manuais).
+   - **Visita:** a do médico da carteira dele **ou** em que ele é o **responsável pela visita**
+     (cobertura). Fora disso → `404 NOT_FOUND` (lista, detalhe, edição, reagendar, cancelar, não recebeu,
+     check-in/out, relato, anexos — inclusive o download).
+   - **Linha do tempo e registros manuais:** só de médico da carteira. A visita de cobertura (médico de
+     outra carteira) aparece para ele na **Agenda** e abre o detalhe/registro, mas a **ficha** daquele
+     médico continua `404` — a ficha é da carteira, não da visita.
+   - **Criar médico:** sempre na própria carteira. `responsibleId` ausente → ele mesmo; outro usuário →
+     `VALIDATION_ERROR` em `responsibleId`. Editar não troca a carteira (só para ele mesmo); quem move
+     carteira é o gestor (item 8).
+   - **Criar visita:** médico da **própria carteira** e `responsibleId` = ele mesmo. Médico de outra
+     carteira → `VALIDATION_ERROR` em `doctorId` (mesma mensagem do médico inexistente: não vira oráculo);
+     outro responsável → `VALIDATION_ERROR` em `responsibleId`. Na edição valem as mesmas regras quando o
+     médico ou o responsável **muda**.
+   - **Gestor e admin** veem e alteram tudo do laboratório.
+5. **Responsável elegível = `representative`, `manager` ou `admin`** (`VISITATION_RESPONSIBLE_ROLES`), ativo
+   e do mesmo laboratório — para médico e para visita. Atendente deixa de ser elegível.
+6. **Médico passa a ter responsável obrigatório:** `POST /doctors` sem responsável (gestor/admin) →
+   `VALIDATION_ERROR`; `PATCH /doctors/:id` que muda algo e deixa o médico sem responsável, ou com
+   responsável de perfil inelegível, → `VALIDATION_ERROR` em `responsibleId`. **Responsável inativo e
+   inalterado continua tolerado** (D-255 item 9 segue valendo para quem foi desativado). A migração **não
+   mexe em dado**: médicos sem responsável ou com atendente como responsável continuam como estão e
+   aparecem no filtro **"Sem responsável / responsável inelegível"** (`GET /doctors?unassigned=true`:
+   responsável nulo, de perfil inelegível ou inativo), que só a tela do gestor/admin oferece. Para o
+   representante o filtro é combinado com a carteira dele e devolve vazio.
+7. **Carteiras (gestor/admin):** `GET /doctors/portfolios` devolve, por responsável, o total de médicos
+   (e quantos ativos). Linhas = todo representante **ativo** (mesmo com zero médicos) + todo usuário
+   ativo de perfil elegível com ao menos um médico. O resto (sem responsável, perfil inelegível ou
+   inativo) vai para o balde `unassigned` — cada médico é contado **uma vez**. O corte **A/B/C**
+   (`abc`) é **opcional no shape** e só passa a vir quando o campo de classificação do médico
+   (CRMLAB-188) for integrado; até lá a chave não vem. Tela `/visitation/portfolios`, no grupo
+   Visitação, só gestor/admin.
+8. **Transferência em lote (gestor/admin):** `POST /doctors/transfer` com `doctorIds` (1–200),
+   `toUserId` (elegível e ativo) e `includeFutureVisits` (default `false`). Tudo ou nada, numa transação
+   com os médicos travados (`FOR UPDATE`). Médico de outro tenant ou inexistente → `404` (nada muda).
+   Médico que já é do destino é ignorado (sem audit). Com `includeFutureVisits`, levam junto as visitas
+   **`agendada`** com data **no futuro** desses médicos **cujo responsável era o responsável anterior do
+   médico** — cobertura combinada com outra pessoa não é desfeita. Serve também para atribuir os médicos
+   "sem responsável" (mesma rota).
+9. **Auditoria da transferência:** um `transfer_doctor` por médico (`entityType: "doctor"`,
+   `oldValues.responsibleId` → `newValues.responsibleId` + `movedVisitIds`) e um `transfer_visit` por
+   visita levada (`entityType: "visit"`, responsável antigo → novo).
+10. **Agenda:** o representante vê só o escopo dele (o servidor recorta); o filtro por responsável só
+    aparece para gestor/admin. Os seletores de responsável (médico e visita) listam só perfis elegíveis;
+    para o representante o seletor mostra só ele mesmo.
+11. **Seeds de dev:** dois representantes no Lab Vida (`carla@labvida.com.br`, `diego@labvida.com.br`),
+    cada um com médicos na carteira.
+12. **Busca de médico na proposta (integração com o CRMLAB-188, 21/11/2026):** o `DoctorPicker` do
+    formulário de proposta (D-328 item 10) não pode usar `GET /doctors` — a atendente, que é quem mais
+    cria proposta, recebe 403 ali, e o representante só veria a própria carteira (a proposta pode vir de
+    qualquer médico). Rota própria **`GET /doctors/lookup?search=&limit=`** para **todo papel do
+    laboratório** (atendente, representante, gestor, admin), **sem recorte de carteira**, só médicos
+    **ativos** do laboratório e só o mínimo para escolher: `id`, `name`, `crm`, `crmUf`, `specialty`.
+    Nada de telefone, endereço, responsável ou curva ABC. A Visitação continua fechada para a atendente:
+    é uma busca de vínculo, não a lista de médicos.
+**Revoga:** D-255 item 3 ("sem perfil novo: todo papel vê, cadastra, edita e inativa") e o "qualquer papel"
+do item 5; D-256 item 9 ("todos veem e mexem em todas as visitas") e o "qualquer usuário ativo" do item 1;
+D-261 item 8 ("todo papel vê, lança, edita e exclui qualquer registro"). D-258 item 8 ("qualquer usuário
+exclui anexo") passa a valer dentro do escopo acima.
+**Impacto:** `backend/migrations/072_representative_role.sql`; `shared/types/auth.types.ts`
+(`representative`, `isFrontlineRole`, `VISITATION_ROLES`, `VISITATION_RESPONSIBLE_ROLES`, `USER_ROLE_LABELS`),
+`doctor.types.ts` (`unassigned`, `DoctorPortfolio`, `TransferDoctors*`), `funnel-rules.types.ts`
+(`ruleActorRoleOf`); `doctor.*`, `visit.*`, `doctor-interaction.*` (escopo), `user.routes.ts`, os serviços
+que enumeravam papéis; frontend `route-config.ts`, `Sidebar`, `pages/Visitation/*` (`Portfolios.tsx` novo),
+gestão de usuários; seeds. SCHEMA §52, API_CONTRACTS §1/§13/§14, BUSINESS_RULES §12–§15, SECURITY
+"Autorização", PAGES §22–§23 e §22c.

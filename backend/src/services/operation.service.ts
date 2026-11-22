@@ -50,7 +50,7 @@ export const DEFAULT_LIMIT = 25;
 /** Teto de itens por bloco. Acima disso e VALIDATION_ERROR, nao corte silencioso. */
 export const MAX_LIMIT = 100;
 
-const LAB_ROLES: readonly UserRole[] = ['attendant', 'manager', 'admin'];
+const LAB_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'];
 const MANAGER_ROLES: readonly UserRole[] = ['manager', 'admin'];
 const CHANNELS: readonly ConversationChannel[] = ['whatsapp', 'sms', 'web', 'direct'];
 

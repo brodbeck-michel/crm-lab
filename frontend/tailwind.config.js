@@ -47,6 +47,17 @@ export default {
             },
           ]),
         ),
+        // Finalidade da visita (CRMLAB-190, D-330): `bg-purpose-azul-bg`, `text-purpose-azul-ink`…
+        ...Object.fromEntries(
+          ['azul', 'verde', 'agua', 'violeta', 'ambar', 'rosa', 'terracota', 'cinza'].map((key) => [
+            `purpose-${key}`,
+            {
+              bg: `var(--color-purpose-${key}-bg)`,
+              ink: `var(--color-purpose-${key}-ink)`,
+              dot: `var(--color-purpose-${key}-dot)`,
+            },
+          ]),
+        ),
         // Perigo genérico (CRMLAB-107, D-274): `bg-danger-soft`, `text-danger-ink`…
         danger: {
           DEFAULT: 'var(--color-danger)',

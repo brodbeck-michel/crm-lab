@@ -141,6 +141,11 @@ export const ERROR_CATALOG = {
     statusCode: 409,
     message: 'Ja existe um medico com este CRM e UF neste laboratorio',
   },
+  // CRMLAB-188 (D-328): nome de especialidade unico por laboratorio (sem acento/caixa).
+  DOCTOR_SPECIALTY_ALREADY_EXISTS: {
+    statusCode: 409,
+    message: 'Ja existe uma especialidade com este nome neste laboratorio',
+  },
   // CRMLAB-87 (D-256): so a visita `agendada` edita, reagenda ou encerra.
   VISIT_ALREADY_CLOSED: {
     statusCode: 409,

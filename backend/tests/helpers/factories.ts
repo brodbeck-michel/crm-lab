@@ -65,6 +65,27 @@ export async function createTenant(input: CreateTenantInput = {}): Promise<Tenan
   return { id, name, slug, isActive };
 }
 
+/**
+ * Id de uma finalidade de visita do tenant (CRMLAB-190, D-330). Todo tenant
+ * nasce com as 5 padrão (trigger da migração 073); o default é "Visita".
+ */
+export async function visitPurposeId(
+  tenantId: string,
+  name = 'Visita',
+  db?: DbClient,
+): Promise<string> {
+  const conn = await client(db);
+  const result = await conn.withoutTenant((tx) =>
+    tx.query<{ id: string }>('SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = $2', [
+      tenantId,
+      name,
+    ]),
+  );
+  const id = result.rows[0]?.id;
+  if (!id) throw new Error(`Finalidade "${name}" não encontrada no tenant ${tenantId}`);
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 // users
 // ---------------------------------------------------------------------------

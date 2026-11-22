@@ -28,9 +28,9 @@ let db: DbClient;
 let app: TestApp;
 let tenantA: TenantRecord;
 let tenantB: TenantRecord;
-let attendantA: UserRecord;
+let repA: UserRecord;
 let managerA: UserRecord;
-let attendantB: UserRecord;
+let repB: UserRecord;
 let doctorA: string;
 let otherDoctorA: string;
 let doctorB: string;
@@ -42,7 +42,7 @@ beforeAll(async () => {
 async function insertDoctor(tenantId: string, name: string, isActive = true): Promise<string> {
   const result = await db.withoutTenant((tx) =>
     tx.query<{ id: string }>(
-      'INSERT INTO doctors (tenant_id, name, is_active) VALUES ($1, $2, $3) RETURNING id',
+      "INSERT INTO doctors (tenant_id, name, is_active, responsible_user_id) VALUES ($1, $2, $3, (SELECT id FROM users WHERE tenant_id = $1 AND role = 'representative' ORDER BY created_at LIMIT 1)) RETURNING id",
       [tenantId, name, isActive],
     ),
   );
@@ -64,12 +64,13 @@ async function insertVisit(doctorId: string, seed: VisitSeed): Promise<string> {
     tx.query<{ id: string }>(
       `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type,
                                   status, status_reason, check_in_at, check_out_at,
-                                  report_presented, report_feedback)
-       VALUES ($1, $2, $3, $4, 'presencial', $5, $6, $7, $8, $9, $10) RETURNING id`,
+                                  report_presented, report_feedback, purpose_id)
+       VALUES ($1, $2, $3, $4, 'presencial', $5, $6, $7, $8, $9, $10,
+               (SELECT id FROM visit_purposes WHERE tenant_id = $1 AND name = 'Visita')) RETURNING id`,
       [
         tenantA.id,
         doctorId,
-        attendantA.id,
+        repA.id,
         seed.scheduledAt,
         seed.status ?? 'agendada',
         seed.statusReason ?? null,
@@ -88,9 +89,9 @@ beforeEach(async () => {
   app = await createTestApp({ db, modules: [doctorModule] });
   tenantA = await createTenant({ name: 'Lab A', slug: 'lab-a', db });
   tenantB = await createTenant({ name: 'Lab B', slug: 'lab-b', db });
-  attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', name: 'Atendente Bia', db });
+  repA = await createUser({ tenantId: tenantA.id, role: 'representative', name: 'Representante Bia', db });
   managerA = await createUser({ tenantId: tenantA.id, role: 'manager', name: 'Gestora Ana', db });
-  attendantB = await createUser({ tenantId: tenantB.id, role: 'attendant', db });
+  repB = await createUser({ tenantId: tenantB.id, role: 'representative', db });
   doctorA = await insertDoctor(tenantA.id, 'Dra. Helena');
   otherDoctorA = await insertDoctor(tenantA.id, 'Dr. Paulo');
   doctorB = await insertDoctor(tenantB.id, 'Dr. Segredo B');
@@ -147,13 +148,13 @@ describe('guardas de acesso', () => {
 
   it('medico de outro laboratorio ou inexistente: 404 NOT_FOUND (nunca 403)', async () => {
     for (const id of [doctorB, UNKNOWN_ID]) {
-      const lista = await app.agent.get(timelinePath(id)).set(app.auth(attendantA));
+      const lista = await app.agent.get(timelinePath(id)).set(app.auth(repA));
       expect(lista.status).toBe(404);
       expect(errorOf(lista).code).toBe('NOT_FOUND');
 
       const lanca = await app.agent
         .post(interactionsPath(id))
-        .set(app.auth(attendantA))
+        .set(app.auth(repA))
         .send({ type: 'ligacao', occurredAt: '2026-10-01T12:00:00.000Z', description: 'Sonda' });
       expect(lanca.status).toBe(404);
     }
@@ -162,7 +163,7 @@ describe('guardas de acesso', () => {
 
 describe('linha do tempo', () => {
   it('medico sem nada: lista vazia e sem cursor', async () => {
-    expect(await timeline(attendantA, doctorA)).toEqual({ items: [], nextCursor: null });
+    expect(await timeline(repA, doctorA)).toEqual({ items: [], nextCursor: null });
   });
 
   it('junta visitas e registros manuais do mais novo para o mais antigo', async () => {
@@ -182,7 +183,7 @@ describe('linha do tempo', () => {
     // Visita de OUTRO medico nao aparece.
     await insertVisit(otherDoctorA, { scheduledAt: '2026-09-15T13:00:00Z' });
 
-    const ligacao = await createInteraction(attendantA, doctorA, {
+    const ligacao = await createInteraction(repA, doctorA, {
       type: 'ligacao',
       occurredAt: '2026-09-12T18:00:00.000Z',
       description: '  Confirmou interesse no convênio  ',
@@ -202,12 +203,13 @@ describe('linha do tempo', () => {
       kind: 'visit',
       status: 'realizada',
       type: 'presencial',
+      purpose: { name: 'Visita', color: 'azul' },
       // Posicao = check-in, nao a data prevista.
       occurredAt: '2026-09-10T13:20:00.000Z',
       scheduledAt: '2026-09-10T13:00:00.000Z',
       checkInAt: '2026-09-10T13:20:00.000Z',
       checkOutAt: '2026-09-10T13:55:00.000Z',
-      responsible: { id: attendantA.id, name: 'Atendente Bia' },
+      responsible: { id: repA.id, name: 'Representante Bia' },
       reportExcerpt: 'Painel de tireoide',
       attachmentCount: 0,
     });
@@ -216,7 +218,7 @@ describe('linha do tempo', () => {
       kind: 'interaction',
       type: 'ligacao',
       description: 'Confirmou interesse no convênio',
-      createdBy: { id: attendantA.id, name: 'Atendente Bia' },
+      createdBy: { id: repA.id, name: 'Representante Bia' },
       updatedBy: null,
     });
   });
@@ -225,7 +227,7 @@ describe('linha do tempo', () => {
     const ids: string[] = [];
     // 5 registros no MESMO instante + 3 visitas: o desempate e o id.
     for (let i = 0; i < 5; i += 1) {
-      const created = await createInteraction(attendantA, doctorA, {
+      const created = await createInteraction(repA, doctorA, {
         type: 'email',
         occurredAt: '2026-09-20T12:00:00.000Z',
         description: `E-mail ${i}`,
@@ -241,7 +243,7 @@ describe('linha do tempo', () => {
     let pages = 0;
     do {
       const query: string = cursor ? `?limit=3&cursor=${cursor}` : '?limit=3';
-      const page = await timeline(attendantA, doctorA, query);
+      const page = await timeline(repA, doctorA, query);
       expect(page.items.length).toBeLessThanOrEqual(3);
       seen.push(...page.items.map((item) => item.id));
       cursor = page.nextCursor;
@@ -260,7 +262,7 @@ describe('linha do tempo', () => {
       presented: '   ',
       feedback: longo,
     });
-    const [visita] = (await timeline(attendantA, doctorA)).items as DoctorTimelineVisit[];
+    const [visita] = (await timeline(repA, doctorA)).items as DoctorTimelineVisit[];
     expect(visita?.reportExcerpt).toHaveLength(DOCTOR_TIMELINE_EXCERPT_MAX_LENGTH);
     expect(visita?.reportExcerpt?.endsWith('…')).toBe(true);
 
@@ -270,7 +272,7 @@ describe('linha do tempo', () => {
 
   it('cursor mexido: 400 VALIDATION_ERROR, nunca 500', async () => {
     for (const cursor of ['lixo', encodeURIComponent(Buffer.from('2026-01-01|nao-e-uuid').toString('base64url'))]) {
-      const response = await app.agent.get(timelinePath(doctorA, `?cursor=${cursor}`)).set(app.auth(attendantA));
+      const response = await app.agent.get(timelinePath(doctorA, `?cursor=${cursor}`)).set(app.auth(repA));
       expect(response.status).toBe(400);
       expect(errorOf(response).code).toBe('VALIDATION_ERROR');
     }
@@ -282,7 +284,7 @@ describe('linha do tempo', () => {
   });
 
   it('limit acima do teto: 400', async () => {
-    const response = await app.agent.get(timelinePath(doctorA, '?limit=500')).set(app.auth(attendantA));
+    const response = await app.agent.get(timelinePath(doctorA, '?limit=500')).set(app.auth(repA));
     expect(response.status).toBe(400);
   });
 });
@@ -313,7 +315,7 @@ describe('registro manual', () => {
       [{ type: 'ligacao', occurredAt: '2026-10-01T12:00:00Z', description: 'x', extra: 1 }, ''],
     ];
     for (const [body, field] of casos) {
-      const response = await app.agent.post(interactionsPath(doctorA)).set(app.auth(attendantA)).send(body);
+      const response = await app.agent.post(interactionsPath(doctorA)).set(app.auth(repA)).send(body);
       expect({ body, status: response.status }).toMatchObject({ status: 400 });
       expect(errorOf(response).code).toBe('VALIDATION_ERROR');
       if (field) expect(JSON.stringify(errorOf(response).details)).toContain(field);
@@ -324,17 +326,17 @@ describe('registro manual', () => {
     const daquiUmaHora = new Date(Date.now() + 60 * 60_000).toISOString();
     const response = await app.agent
       .post(interactionsPath(doctorA))
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ type: 'ligacao', occurredAt: daquiUmaHora, description: 'Futuro' });
     expect(response.status).toBe(400);
     expect(errorOf(response).details).toMatchObject({ fields: { occurredAt: 'A data não pode ser no futuro' } });
 
     const daquiUmMinuto = new Date(Date.now() + 60_000).toISOString();
-    await createInteraction(attendantA, doctorA, { type: 'ligacao', occurredAt: daquiUmMinuto, description: 'Agora' });
+    await createInteraction(repA, doctorA, { type: 'ligacao', occurredAt: daquiUmMinuto, description: 'Agora' });
   });
 
   it('edita parcial, grava quem editou e audita so o diff', async () => {
-    const created = await createInteraction(attendantA, doctorA, {
+    const created = await createInteraction(repA, doctorA, {
       type: 'ligacao',
       occurredAt: '2026-10-01T12:00:00.000Z',
       description: 'Primeira versão',
@@ -349,7 +351,7 @@ describe('registro manual', () => {
       type: 'ligacao',
       description: 'Versão corrigida',
       occurredAt: '2026-10-01T12:00:00.000Z',
-      createdBy: { id: attendantA.id },
+      createdBy: { id: repA.id },
       updatedBy: { id: managerA.id, name: 'Gestora Ana' },
     });
 
@@ -362,7 +364,7 @@ describe('registro manual', () => {
 
     const audit = await auditOf(created.id);
     expect(audit.map((a) => a.action)).toEqual(['create_doctor_interaction', 'update_doctor_interaction']);
-    expect(audit[0]).toMatchObject({ tenant_id: tenantA.id, user_id: attendantA.id });
+    expect(audit[0]).toMatchObject({ tenant_id: tenantA.id, user_id: repA.id });
     expect(audit[1]).toMatchObject({
       user_id: managerA.id,
       old_values: { description: 'Primeira versão' },
@@ -371,14 +373,14 @@ describe('registro manual', () => {
   });
 
   it('exclui de verdade e audita o que foi apagado', async () => {
-    const created = await createInteraction(attendantA, doctorA, {
+    const created = await createInteraction(repA, doctorA, {
       type: 'email',
       occurredAt: '2026-10-01T12:00:00.000Z',
       description: 'Enviou o folder',
     });
 
     await app.agent.delete(interactionPath(doctorA, created.id)).set(app.auth(managerA)).expect(204);
-    expect((await timeline(attendantA, doctorA)).items).toEqual([]);
+    expect((await timeline(repA, doctorA)).items).toEqual([]);
 
     // Segunda exclusao: ja nao existe.
     const again = await app.agent.delete(interactionPath(doctorA, created.id)).set(app.auth(managerA));
@@ -393,36 +395,36 @@ describe('registro manual', () => {
   });
 
   it('registro de OUTRO medico pelo caminho deste: 404 no PATCH e no DELETE', async () => {
-    const created = await createInteraction(attendantA, otherDoctorA, {
+    const created = await createInteraction(repA, otherDoctorA, {
       type: 'ligacao',
       occurredAt: '2026-10-01T12:00:00.000Z',
       description: 'Do Dr. Paulo',
     });
     const patch = await app.agent
       .patch(interactionPath(doctorA, created.id))
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ description: 'Hackeado' });
     expect(patch.status).toBe(404);
-    const del = await app.agent.delete(interactionPath(doctorA, created.id)).set(app.auth(attendantA));
+    const del = await app.agent.delete(interactionPath(doctorA, created.id)).set(app.auth(repA));
     expect(del.status).toBe(404);
   });
 
   it('registro de outro laboratorio: invisivel e intocavel (404)', async () => {
-    const created = await createInteraction(attendantB, doctorB, {
+    const created = await createInteraction(repB, doctorB, {
       type: 'ligacao',
       occurredAt: '2026-10-01T12:00:00.000Z',
       description: 'Segredo do lab B',
     });
     const patch = await app.agent
       .patch(interactionPath(doctorB, created.id))
-      .set(app.auth(attendantA))
+      .set(app.auth(repA))
       .send({ description: 'x' });
     expect(patch.status).toBe(404);
     expect(errorOf(patch).code).toBe('NOT_FOUND');
-    const del = await app.agent.delete(interactionPath(doctorB, created.id)).set(app.auth(attendantA));
+    const del = await app.agent.delete(interactionPath(doctorB, created.id)).set(app.auth(repA));
     expect(del.status).toBe(404);
 
     // Continua la para o dono.
-    expect((await timeline(attendantB, doctorB)).items).toHaveLength(1);
+    expect((await timeline(repB, doctorB)).items).toHaveLength(1);
   });
 });

@@ -239,6 +239,14 @@ export interface ProposalDetail extends Proposal {
    * continua imutavel.
    */
   requestingDoctor: string | null;
+  /**
+   * Médico do cadastro (CRMLAB-188, D-328) — base da curva ABC. `null` = sem
+   * vínculo (o texto `requestingDoctor` continua valendo para exibição).
+   * Opcional no tipo (campo novo), sempre presente na resposta.
+   */
+  doctorId?: string | null;
+  /** Nome do médico vinculado (JOIN). `null` sem vínculo. */
+  doctorName?: string | null;
   /** Espelho do orçamento do LIS vinculado (CRMLAB-52, D-119 item 6). `null` até existir. */
   lisPaidValue: number | null;
   /** `YYYY-MM-DD` (D-110). */
@@ -275,6 +283,12 @@ export interface CreateProposalRequest {
    * Imutável após a criação, mesma convenção de `insuranceId`.
    */
   requestingDoctor?: string | null;
+  /**
+   * Médico do cadastro (CRMLAB-188, D-328): ATIVO e do mesmo laboratório, senão
+   * `VALIDATION_ERROR` em `doctorId`. Com `doctorId` e sem `requestingDoctor`,
+   * o texto recebe o nome do médico.
+   */
+  doctorId?: string | null;
 }
 
 /**
@@ -313,6 +327,8 @@ export interface UpdateProposalItemsRequest {
   items: CreateProposalItemInput[];
   discountPercent?: number;
   requestingDoctor?: string | null;
+  /** Ausente = mantém; `null` = desvincula (CRMLAB-188). Trocar exige médico ATIVO. */
+  doctorId?: string | null;
 }
 
 /**

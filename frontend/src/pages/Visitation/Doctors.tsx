@@ -1,26 +1,26 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import {
-  BRAZIL_UFS,
-  normalizeCrm,
-  type CreateDoctorRequest,
-  type Doctor,
-  type DoctorCrmConflictDetails,
-  type ListDoctorsQuery,
-} from '@crm-lab/shared';
+import { DOCTOR_ABC_CLASSES, type Doctor, type DoctorAbcClass, type ListDoctorsQuery } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
-import { conversationsApi } from '@/api/conversations';
-import { isApiError } from '@/api/client';
-import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys, queryScopes } from '@/api/query-keys';
 import { useApiErrorHandler } from '@/hooks';
+import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { DataTable, EmptyState, Modal, Pagination } from '@/components/shared';
+import { DataTable, EmptyState, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
-import { Button, Chip, Input, SearchInput, SegmentedControl, Select, TextArea, useToast } from '@/components/ui';
+import { Button, Chip, SearchInput, SegmentedControl, Select, useToast } from '@/components/ui';
+import { DoctorModal } from './DoctorModal';
+import { AbcBadge } from './doctor-ui';
+import { useVisitationResponsibles } from './visitation-access';
+
+export { DoctorModal } from './DoctorModal';
+export type { DoctorModalProps } from './DoctorModal';
 
 const PAGE_SIZE = 20;
+
+/** Valor do filtro "Sem responsável / responsável inelegível" (`?unassigned=true`, D-329). */
+export const UNASSIGNED_FILTER = '__unassigned__';
 
 type StatusFilter = 'active' | 'inactive' | 'all';
 
@@ -40,8 +40,10 @@ export function crmLabel(doctor: Pick<Doctor, 'crm' | 'crmUf'>): string {
  * CRMLAB-86, D-255). Primeira tela do grupo "Visitação Médica"; a agenda
  * (`/visitation/agenda`) vem nos próximos cards do épico CRMLAB-85.
  *
- * Todo papel do laboratório vê, cadastra, edita e inativa — não há controle
- * a esconder por perfil. Responsiva: tabela a partir de `md`, cartões abaixo
+ * D-329: representante (só a própria carteira — o servidor recorta), gestor e
+ * admin. O filtro por responsável (com "Sem responsável / inelegível") e o
+ * recálculo da curva ABC (CRMLAB-188, D-328) são só de gestor/admin.
+ * Responsiva: tabela a partir de `md`, cartões abaixo
  * (a `DataTable` rola na horizontal, o que no celular esconde as ações).
  */
 export default function Doctors() {
@@ -53,6 +55,8 @@ export default function Doctors() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<StatusFilter>('active');
   const [responsibleId, setResponsibleId] = useState('');
+  const [specialtyId, setSpecialtyId] = useState('');
+  const [abcClass, setAbcClass] = useState<DoctorAbcClass | ''>('');
   const [editing, setEditing] = useState<Doctor | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -62,9 +66,15 @@ export default function Doctors() {
       limit: PAGE_SIZE,
       ...(search.trim().length > 0 ? { search: search.trim() } : {}),
       ...(status !== 'all' ? { active: status === 'active' } : {}),
-      ...(responsibleId ? { responsibleId } : {}),
+      ...(responsibleId === UNASSIGNED_FILTER
+        ? { unassigned: true }
+        : responsibleId
+          ? { responsibleId }
+          : {}),
+      ...(specialtyId ? { specialtyId } : {}),
+      ...(abcClass ? { abcClass } : {}),
     }),
-    [page, search, status, responsibleId],
+    [page, search, status, responsibleId, specialtyId, abcClass],
   );
 
   const doctorsQuery = useQuery({
@@ -72,12 +82,28 @@ export default function Doctors() {
     queryFn: () => doctorsApi.list(filters),
   });
 
-  // Usuários ativos do laboratório, qualquer papel (`GET /users` é admin-only).
-  const assigneesQuery = useQuery({
-    queryKey: queryKeys.conversationAssignees(),
-    queryFn: () => conversationsApi.assignees(),
+  // Responsáveis elegíveis (D-329); para o representante, só ele mesmo.
+  const { seesAll, responsibles: assignees } = useVisitationResponsibles();
+
+  const specialtiesQuery = useQuery({
+    queryKey: queryKeys.doctorSpecialties(),
+    queryFn: () => doctorsApi.specialties(),
   });
-  const assignees = assigneesQuery.data?.assignees ?? [];
+  const specialties = specialtiesQuery.data?.specialties ?? [];
+
+  const role = useAuthStore((s) => s.user?.role);
+  const canRecalculate = role === 'manager' || role === 'admin';
+
+  const recalculate = useMutation({
+    mutationFn: () => doctorsApi.recalculateAbc(),
+    onSuccess: (result) => {
+      toast(`Curva ABC recalculada: ${result.counts.A} A · ${result.counts.B} B · ${result.counts.C} C`, {
+        tone: 'positive',
+      });
+      void queryClient.invalidateQueries({ queryKey: queryScopes.doctors });
+    },
+    onError: handleApiError,
+  });
 
   const toggleActive = useMutation({
     mutationFn: (doctor: Doctor) =>
@@ -128,9 +154,12 @@ export default function Doctors() {
       minWidth: 220,
       render: (doctor) => (
         <div className="min-w-0">
-          <Link to={`/visitation/doctors/${doctor.id}`} className="block truncate font-semibold text-text hover:underline">
-            {doctor.name}
-          </Link>
+          <div className="flex min-w-0 items-center gap-sm">
+            <Link to={`/visitation/doctors/${doctor.id}`} className="block truncate font-semibold text-text hover:underline">
+              {doctor.name}
+            </Link>
+            <AbcBadge doctor={doctor} />
+          </div>
           {doctor.specialty && <div className="truncate text-caption text-neutral-600">{doctor.specialty}</div>}
         </div>
       ),
@@ -163,9 +192,16 @@ export default function Doctors() {
         title="Médicos"
         description="Médicos solicitantes do laboratório e quem cuida de cada carteira."
         actions={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            + Novo médico
-          </Button>
+          <div className="flex flex-wrap gap-sm">
+            {canRecalculate && (
+              <Button variant="secondary" onClick={() => recalculate.mutate()} loading={recalculate.isPending}>
+                Recalcular curva ABC
+              </Button>
+            )}
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              + Novo médico
+            </Button>
+          </div>
         }
       />
 
@@ -180,17 +216,48 @@ export default function Doctors() {
             }}
           />
         </div>
+        {seesAll && (
+          <div className="w-full md:w-64">
+            <Select
+              aria-label="Filtrar por responsável"
+              value={responsibleId}
+              onChange={(event) => {
+                setResponsibleId(event.target.value);
+                setPage(1);
+              }}
+              options={[
+                { value: '', label: 'Todos os responsáveis' },
+                { value: UNASSIGNED_FILTER, label: 'Sem responsável / responsável inelegível' },
+                ...assignees.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
+          </div>
+        )}
         <div className="w-full md:w-64">
           <Select
-            aria-label="Filtrar por responsável"
-            value={responsibleId}
+            aria-label="Filtrar por especialidade"
+            value={specialtyId}
             onChange={(event) => {
-              setResponsibleId(event.target.value);
+              setSpecialtyId(event.target.value);
               setPage(1);
             }}
             options={[
-              { value: '', label: 'Todos os responsáveis' },
-              ...assignees.map((a) => ({ value: a.id, label: a.name })),
+              { value: '', label: 'Todas as especialidades' },
+              ...specialties.map((s) => ({ value: s.id, label: s.isActive ? s.name : `${s.name} (inativa)` })),
+            ]}
+          />
+        </div>
+        <div className="w-full md:w-48">
+          <Select
+            aria-label="Filtrar por curva ABC"
+            value={abcClass}
+            onChange={(event) => {
+              setAbcClass(event.target.value as DoctorAbcClass | '');
+              setPage(1);
+            }}
+            options={[
+              { value: '', label: 'Curva ABC: todas' },
+              ...DOCTOR_ABC_CLASSES.map((cls) => ({ value: cls, label: `Curva ABC: ${cls}` })),
             ]}
           />
         </div>
@@ -213,7 +280,7 @@ export default function Doctors() {
       ) : doctors.length === 0 ? (
         <EmptyState
           message="Nenhum médico encontrado"
-          hint={search || responsibleId || status !== 'active' ? 'Ajuste a busca ou os filtros.' : 'Cadastre o primeiro médico.'}
+          hint={search || responsibleId || specialtyId || abcClass || status !== 'active' ? 'Ajuste a busca ou os filtros.' : 'Cadastre o primeiro médico.'}
         />
       ) : (
         <>
@@ -234,9 +301,12 @@ export default function Doctors() {
               >
                 <div className="flex items-start justify-between gap-md">
                   <div className="min-w-0">
-                    <Link to={`/visitation/doctors/${doctor.id}`} className="font-semibold text-text hover:underline">
-                      {doctor.name}
-                    </Link>
+                    <div className="flex items-center gap-sm">
+                      <Link to={`/visitation/doctors/${doctor.id}`} className="font-semibold text-text hover:underline">
+                        {doctor.name}
+                      </Link>
+                      <AbcBadge doctor={doctor} />
+                    </div>
                     <div className="text-caption text-neutral-600">
                       {[doctor.crm ? `CRM ${crmLabel(doctor)}` : null, doctor.specialty].filter(Boolean).join(' · ') ||
                         'Sem CRM'}
@@ -264,243 +334,5 @@ export default function Doctors() {
         <DoctorModal doctor={editing ?? undefined} assignees={assignees} onClose={closeModal} />
       )}
     </PageContainer>
-  );
-}
-
-export interface DoctorModalProps {
-  doctor?: Doctor;
-  assignees: Array<{ id: string; name: string }>;
-  onClose: () => void;
-}
-
-interface DoctorForm {
-  name: string;
-  crm: string;
-  crmUf: string;
-  specialty: string;
-  clinic: string;
-  address: string;
-  phone: string;
-  email: string;
-  contactName: string;
-  visitPreference: string;
-  notes: string;
-  responsibleId: string;
-}
-
-function toForm(doctor?: Doctor): DoctorForm {
-  return {
-    name: doctor?.name ?? '',
-    crm: doctor?.crm ?? '',
-    crmUf: doctor?.crmUf ?? '',
-    specialty: doctor?.specialty ?? '',
-    clinic: doctor?.clinic ?? '',
-    address: doctor?.address ?? '',
-    phone: doctor?.phone ?? '',
-    email: doctor?.email ?? '',
-    contactName: doctor?.contactName ?? '',
-    visitPreference: doctor?.visitPreference ?? '',
-    notes: doctor?.notes ?? '',
-    responsibleId: doctor?.responsible?.id ?? '',
-  };
-}
-
-/** Mensagem do 409: diz quem já usa o CRM e, se inativo, que o caminho é reativar. */
-function crmConflictMessage(details: Record<string, unknown> | undefined): string {
-  const existing = (details as Partial<DoctorCrmConflictDetails> | undefined)?.existingDoctor;
-  if (!existing?.name) return 'Já existe um médico com este CRM e UF.';
-  return existing.isActive
-    ? `CRM já cadastrado para ${existing.name}.`
-    : `CRM já cadastrado para ${existing.name} (inativo). Reative o cadastro em vez de criar outro.`;
-}
-
-/** Cadastro/edição do médico — também aberto pela ficha (`DoctorProfile`, CRMLAB-89). */
-export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
-  const queryClient = useQueryClient();
-  const handleApiError = useApiErrorHandler();
-  const { toast } = useToast();
-  const isEdit = doctor !== undefined;
-
-  const [form, setForm] = useState<DoctorForm>(() => toForm(doctor));
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-
-  const save = useMutation({
-    mutationFn: (body: CreateDoctorRequest) =>
-      doctor ? doctorsApi.update(doctor.id, body) : doctorsApi.create(body),
-    onSuccess: () => {
-      toast(isEdit ? 'Médico atualizado' : 'Médico cadastrado', { tone: 'positive' });
-      void queryClient.invalidateQueries({ queryKey: queryScopes.doctors });
-      onClose();
-    },
-    onError: (error) => {
-      if (isApiError(error) && error.code === 'DOCTOR_CRM_ALREADY_EXISTS') {
-        setFieldErrors({ crm: crmConflictMessage(error.details) });
-        return;
-      }
-      if (isApiError(error) && error.code === 'VALIDATION_ERROR') {
-        const fields = mapFieldErrors(error.details);
-        if (Object.keys(fields).length > 0) {
-          setFieldErrors(fields);
-          return;
-        }
-      }
-      handleApiError(error);
-    },
-  });
-
-  function set<K extends keyof DoctorForm>(field: K, value: DoctorForm[K]) {
-    setForm((current) => ({ ...current, [field]: value }));
-    if (fieldErrors[field]) {
-      setFieldErrors(({ [field]: _removed, ...rest }) => rest);
-    }
-  }
-
-  function handleSubmit(event?: React.FormEvent) {
-    event?.preventDefault();
-    // Mesma regra do servidor (D-255), só para não gastar a ida: o backend valida de novo.
-    const errors: Record<string, string> = {};
-    if (form.name.trim().length === 0) errors.name = 'Informe o nome';
-    if (normalizeCrm(form.crm) !== null && form.crmUf === '') errors.crmUf = 'Informe a UF do CRM';
-    if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors);
-      return;
-    }
-
-    // Vazio vai como `null`: no PATCH isso limpa o campo, no POST é o mesmo que ausente.
-    const orNull = (value: string) => (value.trim().length > 0 ? value.trim() : null);
-    save.mutate({
-      name: form.name.trim(),
-      crm: orNull(form.crm),
-      crmUf: orNull(form.crmUf),
-      specialty: orNull(form.specialty),
-      clinic: orNull(form.clinic),
-      address: orNull(form.address),
-      phone: orNull(form.phone),
-      email: orNull(form.email),
-      contactName: orNull(form.contactName),
-      visitPreference: orNull(form.visitPreference),
-      notes: orNull(form.notes),
-      responsibleId: form.responsibleId || null,
-    });
-  }
-
-  // O responsável atual pode ter sido desativado e sumir da lista de ativos:
-  // ele continua aparecendo para o formulário não trocar a carteira sozinho.
-  const responsibleOptions = [
-    { value: '', label: 'Sem responsável' },
-    ...assignees.map((a) => ({ value: a.id, label: a.name })),
-  ];
-  if (doctor?.responsible && !assignees.some((a) => a.id === doctor.responsible?.id)) {
-    responsibleOptions.push({ value: doctor.responsible.id, label: `${doctor.responsible.name} (inativo)` });
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={isEdit ? 'Editar médico' : 'Novo médico'}
-      footer={
-        <div className="ml-auto flex gap-md">
-          <Button variant="secondary" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button variant="primary" onClick={() => handleSubmit()} loading={save.isPending}>
-            {isEdit ? 'Salvar' : 'Cadastrar'}
-          </Button>
-        </div>
-      }
-    >
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-md md:grid-cols-2" noValidate>
-        <div className="md:col-span-2">
-          <Input
-            label="Nome"
-            value={form.name}
-            onChange={(e) => set('name', e.target.value)}
-            error={fieldErrors.name}
-            required
-          />
-        </div>
-        <Input
-          label="CRM"
-          hint="Opcional. Só os números."
-          inputMode="numeric"
-          value={form.crm}
-          onChange={(e) => set('crm', e.target.value)}
-          error={fieldErrors.crm}
-        />
-        <Select
-          label="UF do CRM"
-          value={form.crmUf}
-          onChange={(e) => set('crmUf', e.target.value)}
-          options={[{ value: '', label: '—' }, ...BRAZIL_UFS.map((uf) => ({ value: uf, label: uf }))]}
-          error={fieldErrors.crmUf}
-        />
-        <Input
-          label="Especialidade"
-          value={form.specialty}
-          onChange={(e) => set('specialty', e.target.value)}
-          error={fieldErrors.specialty}
-        />
-        <Input
-          label="Clínica/consultório"
-          value={form.clinic}
-          onChange={(e) => set('clinic', e.target.value)}
-          error={fieldErrors.clinic}
-        />
-        <div className="md:col-span-2">
-          <Input
-            label="Endereço"
-            value={form.address}
-            onChange={(e) => set('address', e.target.value)}
-            error={fieldErrors.address}
-          />
-        </div>
-        <Input
-          label="Telefone/WhatsApp"
-          type="tel"
-          value={form.phone}
-          onChange={(e) => set('phone', e.target.value)}
-          error={fieldErrors.phone}
-        />
-        <Input
-          label="E-mail"
-          type="email"
-          value={form.email}
-          onChange={(e) => set('email', e.target.value)}
-          error={fieldErrors.email}
-        />
-        <Input
-          label="Secretária/contato"
-          value={form.contactName}
-          onChange={(e) => set('contactName', e.target.value)}
-          error={fieldErrors.contactName}
-        />
-        <Input
-          label="Melhor dia e horário para visita"
-          placeholder="Ex.: terças à tarde"
-          value={form.visitPreference}
-          onChange={(e) => set('visitPreference', e.target.value)}
-          error={fieldErrors.visitPreference}
-        />
-        <div className="md:col-span-2">
-          <Select
-            label="Responsável pela carteira"
-            value={form.responsibleId}
-            onChange={(e) => set('responsibleId', e.target.value)}
-            options={responsibleOptions}
-            error={fieldErrors.responsibleId}
-          />
-        </div>
-        <div className="md:col-span-2">
-          <TextArea
-            label="Observações"
-            value={form.notes}
-            onChange={(e) => set('notes', e.target.value)}
-            error={fieldErrors.notes}
-            rows={3}
-          />
-        </div>
-      </form>
-    </Modal>
   );
 }

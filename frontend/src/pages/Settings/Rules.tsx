@@ -108,7 +108,8 @@ function diffRules(base: unknown, draft: unknown): unknown {
 }
 
 const ROLE_LABELS: Record<RuleActorRole, string> = {
-  attendant: 'Atendente',
+  // O representante conta como atendente nas regras do funil (D-329).
+  attendant: 'Atendente / representante',
   manager: 'Gestor',
 };
 

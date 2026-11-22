@@ -11,6 +11,7 @@ import type {
   VisitAttachment,
   VisitDetail,
   VisitPerson,
+  VisitPurposeColor,
   VisitReschedule,
   VisitStatus,
   VisitType,
@@ -21,7 +22,8 @@ import type { DbClient, DbTx } from '../db/types.js';
 const COLUMNS = `v.id, v.doctor_id, d.name AS doctor_name, d.crm AS doctor_crm, d.crm_uf AS doctor_crm_uf,
   d.specialty AS doctor_specialty, d.clinic AS doctor_clinic, d.is_active AS doctor_is_active,
   v.responsible_user_id, ru.name AS responsible_name,
-  v.scheduled_at, v.type, v.agenda, v.status, v.status_reason, v.status_changed_at,
+  v.scheduled_at, v.type, v.purpose_id, vp.name AS purpose_name, vp.color AS purpose_color,
+  v.agenda, v.status, v.status_reason, v.status_changed_at,
   v.status_changed_by, su.name AS status_changed_by_name,
   v.created_by, cu.name AS created_by_name, v.created_at, v.updated_at,
   (SELECT COUNT(*)::int FROM doctor_visit_reschedules r WHERE r.visit_id = v.id) AS reschedule_count,
@@ -33,6 +35,7 @@ const COLUMNS = `v.id, v.doctor_id, d.name AS doctor_name, d.crm AS doctor_crm, 
 
 const FROM = `FROM doctor_visits v
   JOIN doctors d ON d.id = v.doctor_id
+  JOIN visit_purposes vp ON vp.id = v.purpose_id
   LEFT JOIN users ru ON ru.id = v.responsible_user_id
   LEFT JOIN users su ON su.id = v.status_changed_by
   LEFT JOIN users cu ON cu.id = v.created_by
@@ -55,6 +58,9 @@ interface VisitRow {
   responsible_name: string | null;
   scheduled_at: Date | string;
   type: VisitType;
+  purpose_id: string;
+  purpose_name: string;
+  purpose_color: VisitPurposeColor;
   agenda: string | null;
   status: VisitStatus;
   status_reason: string | null;
@@ -128,6 +134,7 @@ export function toVisit(row: VisitRow): Visit {
     responsible: person(row.responsible_user_id, row.responsible_name),
     scheduledAt: isoDateTime(row.scheduled_at),
     type: row.type,
+    purpose: { id: row.purpose_id, name: row.purpose_name, color: row.purpose_color },
     agenda: row.agenda,
     status: row.status,
     statusReason: row.status_reason,
@@ -174,6 +181,12 @@ export interface VisitListCriteria {
   doctorId?: string;
   responsibleId?: string;
   status?: VisitStatus;
+  purposeId?: string;
+  /**
+   * Escopo do representante (D-329): so visita de medico da carteira dele OU em
+   * que ele e o responsavel. Ausente = sem recorte (gestor/admin).
+   */
+  ownerId?: string;
   /** Quantas linhas buscar (o service pede uma a mais para saber se truncou). */
   limit: number;
 }
@@ -183,16 +196,20 @@ export interface VisitFields {
   responsibleId: string;
   scheduledAt: Date;
   type: VisitType;
+  purposeId: string;
   agenda: string | null;
 }
 
-export type VisitPatch = Partial<Pick<VisitFields, 'doctorId' | 'responsibleId' | 'type' | 'agenda'>>;
+export type VisitPatch = Partial<
+  Pick<VisitFields, 'doctorId' | 'responsibleId' | 'type' | 'purposeId' | 'agenda'>
+>;
 
 /** Campo -> coluna fisica. Whitelist: nada dinamico no SQL. */
 const PATCH_COLUMNS: Record<keyof VisitPatch, string> = {
   doctorId: 'doctor_id',
   responsibleId: 'responsible_user_id',
   type: 'type',
+  purposeId: 'purpose_id',
   agenda: 'agenda',
 };
 
@@ -232,6 +249,17 @@ export type AttachmentInsertResult =
 export interface TenantDoctorRef {
   id: string;
   isActive: boolean;
+  /** Dono da carteira (D-329): o representante so agenda para os proprios medicos. */
+  responsibleId: string | null;
+}
+
+/**
+ * Recorte do representante (D-329): medico da carteira dele OU visita em que ele
+ * e o responsavel (cobertura). `n` e a posicao do parametro com o id do usuario;
+ * exige os aliases `v` (doctor_visits) e `d` (doctors).
+ */
+export function visitScopeSql(n: number): string {
+  return `(d.responsible_user_id = $${n} OR v.responsible_user_id = $${n})`;
 }
 
 /** Usuario do laboratorio que pode ser responsavel pela visita. */
@@ -261,6 +289,14 @@ export class VisitRepository {
       params.push(criteria.status);
       where.push(`v.status = $${params.length}`);
     }
+    if (criteria.purposeId !== undefined) {
+      params.push(criteria.purposeId);
+      where.push(`v.purpose_id = $${params.length}`);
+    }
+    if (criteria.ownerId !== undefined) {
+      params.push(criteria.ownerId);
+      where.push(visitScopeSql(params.length));
+    }
     params.push(criteria.limit);
 
     return this.db.withTenant(tenantId, async (tx) => {
@@ -275,8 +311,22 @@ export class VisitRepository {
     });
   }
 
-  async findById(tenantId: string, id: string): Promise<VisitDetail | null> {
-    return this.db.withTenant(tenantId, (tx) => selectDetail(tx, id));
+  /**
+   * `ownerId` (D-329): para o representante a visita so existe se o medico e da
+   * carteira dele ou se ele e o responsavel. Fora do escopo -> `null` (404).
+   */
+  async findById(tenantId: string, id: string, ownerId?: string): Promise<VisitDetail | null> {
+    return this.db.withTenant(tenantId, async (tx) => {
+      if (ownerId !== undefined) {
+        const visible = await tx.query<{ id: string }>(
+          `SELECT v.id FROM doctor_visits v JOIN doctors d ON d.id = v.doctor_id
+           WHERE v.id = $1 AND ${visitScopeSql(2)}`,
+          [id, ownerId],
+        );
+        if (!visible.rows[0]) return null;
+      }
+      return selectDetail(tx, id);
+    });
   }
 
   /**
@@ -285,12 +335,12 @@ export class VisitRepository {
    */
   async findTenantDoctor(tenantId: string, doctorId: string): Promise<TenantDoctorRef | null> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const result = await tx.query<{ id: string; is_active: boolean }>(
-        'SELECT id, is_active FROM doctors WHERE id = $1 AND tenant_id = $2',
+      const result = await tx.query<{ id: string; is_active: boolean; responsible_user_id: string | null }>(
+        'SELECT id, is_active, responsible_user_id FROM doctors WHERE id = $1 AND tenant_id = $2',
         [doctorId, tenantId],
       );
       const row = result.rows[0];
-      return row ? { id: row.id, isActive: row.is_active } : null;
+      return row ? { id: row.id, isActive: row.is_active, responsibleId: row.responsible_user_id } : null;
     });
   }
 
@@ -308,8 +358,9 @@ export class VisitRepository {
   async insert(tenantId: string, createdBy: string | null, data: VisitFields): Promise<VisitDetail> {
     return this.db.withTenant(tenantId, async (tx) => {
       const result = await tx.query<{ id: string }>(
-        `INSERT INTO doctor_visits (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, agenda, created_by)
-         VALUES ($1, $2, $3, $4::timestamptz, $5, $6, $7)
+        `INSERT INTO doctor_visits
+           (tenant_id, doctor_id, responsible_user_id, scheduled_at, type, purpose_id, agenda, created_by)
+         VALUES ($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)
          RETURNING id`,
         [
           tenantId,
@@ -317,6 +368,7 @@ export class VisitRepository {
           data.responsibleId,
           data.scheduledAt.toISOString(),
           data.type,
+          data.purposeId,
           data.agenda,
           createdBy,
         ],

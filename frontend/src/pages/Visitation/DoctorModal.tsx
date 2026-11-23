@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -214,6 +214,49 @@ function validate(form: DoctorForm): Record<string, string> {
   return errors;
 }
 
+/** Rótulo de cada campo que pode receber erro — para o toast "Corrija: …" (CRMLAB-195). */
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Nome',
+  crm: 'CRM',
+  crmUf: 'UF do CRM',
+  specialtyId: 'Especialidade',
+  birthDay: 'Aniversário do médico',
+  birthMonth: 'Aniversário do médico',
+  birthYear: 'Aniversário do médico',
+  phone: 'Telefone/WhatsApp',
+  email: 'E-mail',
+  responsibleId: 'Responsável pela carteira',
+  notes: 'Observações',
+  clinic: 'Clínica/consultório',
+  acceptsPrivate: 'Atende particular',
+  monthlyConsultations: 'Consultas/mês',
+  monthlyPrivateConsultations: 'Particulares/mês',
+  consultationFee: 'Valor da consulta',
+  visitHours: 'Horário para representante',
+  visitPreference: 'Observação de horário',
+  partnerSince: 'Parceiro desde',
+  partnershipNotes: 'Anotações da parceria',
+  addressZip: 'CEP',
+  addressStreet: 'Logradouro',
+  addressNumber: 'Número',
+  addressComplement: 'Complemento',
+  addressDistrict: 'Bairro',
+  addressCity: 'Cidade',
+  addressState: 'UF',
+  secretaryName: 'Nome da secretária',
+  secretaryBirthDay: 'Aniversário da secretária',
+  secretaryBirthMonth: 'Aniversário da secretária',
+  secretaryBirthYear: 'Aniversário da secretária',
+  secretaryPhone: 'Telefone/WhatsApp da secretária',
+  secretaryNotes: 'Anotações sobre a secretária',
+};
+
+/** "Corrija: Nome, Responsável pela carteira" — rótulos sem repetir, campo desconhecido vira o genérico. */
+export function describeFieldErrors(errors: Record<string, string>): string {
+  const labels = [...new Set(Object.keys(errors).map((key) => FIELD_LABELS[key] ?? 'outros campos'))];
+  return `Corrija: ${labels.join(', ')}`;
+}
+
 function toRequest(form: DoctorForm): CreateDoctorRequest {
   const visitHours: DoctorVisitHours[] = form.visitHours.map((row) => ({
     weekdays: [...row.weekdays].sort((a, b) => a - b),
@@ -290,6 +333,30 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [newSpecialty, setNewSpecialty] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  // Sobe a cada envio barrado: depois do render que pinta os erros, leva a pessoa até o primeiro.
+  const [revealTick, setRevealTick] = useState(0);
+
+  /**
+   * O modal rola por dentro e o campo com erro pode estar fora da vista (CRMLAB-195):
+   * marca os campos, avisa quais são e (no efeito abaixo) rola/foca o primeiro.
+   */
+  function showErrors(errors: Record<string, string>) {
+    setFieldErrors(errors);
+    toast(describeFieldErrors(errors), { tone: 'attention' });
+    setRevealTick((n) => n + 1);
+  }
+
+  useEffect(() => {
+    if (revealTick === 0) return;
+    // Ordem do DOM = ordem da tela. `role="alert"` cobre também o erro das faixas de horário.
+    const first = formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"], [role="alert"]');
+    if (!first) return;
+    first.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    if (first.matches('input, select, textarea') && !first.matches(':disabled')) {
+      first.focus({ preventScroll: true });
+    }
+  }, [revealTick]);
 
   const specialtiesQuery = useQuery({
     queryKey: queryKeys.doctorSpecialties(),
@@ -309,7 +376,7 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
     },
     onError: (error) => {
       if (isApiError(error) && error.code === 'DOCTOR_CRM_ALREADY_EXISTS') {
-        setFieldErrors({ crm: crmConflictMessage(error.details) });
+        showErrors({ crm: crmConflictMessage(error.details) });
         return;
       }
       if (isApiError(error) && error.code === 'VALIDATION_ERROR') {
@@ -320,7 +387,7 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
           for (const [key, message] of Object.entries(fields)) {
             merged[key.startsWith('visitHours') ? 'visitHours' : key] = message;
           }
-          setFieldErrors(merged);
+          showErrors(merged);
           return;
         }
       }
@@ -406,7 +473,7 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
     event?.preventDefault();
     const errors = validate(form);
     if (Object.keys(errors).length > 0) {
-      setFieldErrors(errors);
+      showErrors(errors);
       return;
     }
     save.mutate(toRequest(form));
@@ -441,7 +508,7 @@ export function DoctorModal({ doctor, assignees, onClose }: DoctorModalProps) {
         </div>
       }
     >
-      <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-lg md:grid-cols-2" noValidate>
+      <form ref={formRef} onSubmit={handleSubmit} className="grid grid-cols-1 gap-lg md:grid-cols-2" noValidate>
         <FormSection title="Dados do médico">
           <div className="md:col-span-2">
             <Input label="Nome" required {...bind('name')} />

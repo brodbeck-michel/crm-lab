@@ -264,6 +264,47 @@ describe('Doctors (/visitation/doctors)', () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it('envio barrado avisa quais campos corrigir, rola e foca o primeiro (CRMLAB-195)', async () => {
+    const user = userEvent.setup({ delay: null });
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId('doctors-table')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '+ Novo médico' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Novo médico' }));
+    // Só a parte de baixo preenchida, como no caso real: os erros ficam lá em cima.
+    await user.type(dialog.getByLabelText('Nome da secretária'), 'Graziela');
+    await user.click(dialog.getByRole('button', { name: 'Cadastrar' }));
+
+    expect(await screen.findByText('Corrija: Nome, Responsável pela carteira')).toBeInTheDocument();
+    const name = dialog.getByLabelText(NAME_LABEL);
+    await waitFor(() => expect(name).toHaveFocus());
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('VALIDATION_ERROR do servidor também avisa quais campos corrigir (CRMLAB-195)', async () => {
+    const user = userEvent.setup({ delay: null });
+    Element.prototype.scrollIntoView = vi.fn();
+    createMock.mockRejectedValue(
+      new ApiError('VALIDATION_ERROR', 'Dados invalidos', 400, { fields: { email: 'E-mail inválido' } }),
+    );
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId('doctors-table')).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '+ Novo médico' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Novo médico' }));
+    await user.type(dialog.getByLabelText(NAME_LABEL), 'Dr. Servidor');
+    await waitFor(() => expect(dialog.getByRole('option', { name: 'Ana Gestora' })).toBeInTheDocument());
+    await user.selectOptions(dialog.getByLabelText('Responsável pela carteira'), 'u-ana');
+    await user.click(dialog.getByRole('button', { name: 'Cadastrar' }));
+
+    expect(await screen.findByText('Corrija: E-mail')).toBeInTheDocument();
+    expect(dialog.getByText('E-mail inválido')).toBeInTheDocument();
+    await waitFor(() => expect(dialog.getByLabelText('E-mail')).toHaveFocus());
+  });
+
   it('409 DOCTOR_CRM_ALREADY_EXISTS marca o CRM com o nome do médico existente e mantém o modal aberto', async () => {
     const user = userEvent.setup({ delay: null });
     createMock.mockRejectedValue(

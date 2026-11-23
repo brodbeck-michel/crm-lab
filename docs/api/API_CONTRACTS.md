@@ -6345,9 +6345,11 @@ Shapes `DoctorPortfolio` / `ListDoctorPortfoliosResponse` em `shared/types/docto
 - **`unassigned`:** os médicos sem responsável, com responsável de perfil inelegível (atendente) ou
   inativo — o mesmo recorte de `?unassigned=true`. Cada médico conta **uma vez** (numa linha ou aqui).
 - `doctorCount` conta ativos e inativos; `activeDoctorCount`, só os ativos.
-- **`abc?: { "A": n, "B": n, "C": n, "unclassified": n }`** — corte pela classificação ABC do médico.
-  **Opcional:** só passa a vir quando o campo de classificação (CRMLAB-188) for integrado; até lá a
-  chave não vem e a tela não mostra a coluna.
+- **`abc: { "A": n, "B": n, "C": n, "unclassified": n }`** — corte pela classificação ABC dos médicos
+  **ativos** (CRMLAB-193, D-333 item 7): soma `activeDoctorCount`. `unclassified` = médico com
+  `abcClass: null` (ainda não calculado — novo, até o próximo recálculo diário). Vem **sempre**, em
+  cada linha e em `unassigned`; continua opcional no shape (`DoctorPortfolioCounts.abc?`) só por
+  compatibilidade. Ex.: `"abc": { "A": 2, "B": 3, "C": 6, "unclassified": 0 }`.
 
 **Erros:** `FORBIDDEN` (403 — `attendant`, `representative`, `platform_operator`)
 
@@ -6534,7 +6536,8 @@ As 4 rotas entram no inventário de isolamento (132 → 136). Ficam registradas 
 
 Tela `/visitation/doctors/:id` (PAGES.md §22b). Shapes em `shared/types/doctor-timeline.types.ts`;
 tabela `doctor_interactions` (SCHEMA.md §38); service `DoctorInteractionService` (SERVICES.md §32).
-**Mais 4 rotas**, no inventário de isolamento (102 → 106). Desde D-329 (revoga D-261 item 8):
+**Mais 4 rotas**, no inventário de isolamento (102 → 106); o feed do CRMLAB-192 (D-332) soma as
+3 de comentário (142 → 145). Desde D-329 (revoga D-261 item 8):
 `representative`, `manager` e `admin`; atendente → `403`. O representante só alcança a linha do
 tempo e os registros de médico **da carteira dele**; fora dela → `404`.
 Médico de outro tenant, inexistente, ou registro de **outro médico** no caminho → `404 NOT_FOUND`.
@@ -6593,7 +6596,78 @@ Médico de outro tenant, inexistente, ou registro de **outro médico** no caminh
   cortado em 280 caracteres com `…`. `null` sem relato. A visita inteira abre em `GET /visits/:id`.
 - `nextCursor: null` = acabou. O cursor é opaco; mexido → `VALIDATION_ERROR`.
 
-**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400 — `limit` fora de 1..50, cursor inválido)
+**Feed (CRMLAB-192, D-332)** — campos novos, todos sempre presentes:
+- `?types=visita,ligacao` — filtro por tipo: um ou mais de `visita` · `ligacao` · `email` ·
+  `whatsapp`, separados por vírgula (`DOCTOR_TIMELINE_FILTERS`). Ausente = tudo. Valor fora da lista
+  → `VALIDATION_ERROR` (`fields.types`). Aplicado no SQL antes do cursor; o cursor de uma página só
+  vale com o mesmo filtro.
+- Na visita: `report` (`{ presented, doctorFeedback, objections }`, o `VisitReport` inteiro),
+  `nextVisitDate` (`'YYYY-MM-DD'` ou `null`) e `attachments` (`VisitAttachment[]`, mais antigo
+  primeiro — baixa por `GET /visits/:visitId/attachments/:attachmentId`).
+- Em todo item (visita e registro): `comments` (`DoctorTimelineComment[]`, mais antigo primeiro;
+  no máximo 100 por item).
+
+```json
+{
+  "kind": "visit",
+  "id": "a3e1…",
+  "...": "campos acima",
+  "report": { "presented": "Painel de tireoide", "doctorFeedback": "Gostou", "objections": null },
+  "nextVisitDate": "2026-11-03",
+  "attachments": [
+    { "id": "c71e…", "fileName": "folder.jpg", "mimeType": "image/jpeg", "byteSize": 182340,
+      "uploadedBy": { "id": "7c3d…", "name": "Ana Lima" }, "createdAt": "2026-10-06T14:00:00.000Z" }
+  ],
+  "comments": [
+    { "id": "9d2a…", "itemKind": "visit", "itemId": "a3e1…", "body": "Manda o material na sexta",
+      "author": { "id": "2b4f…", "name": "Gestora Bia" },
+      "createdAt": "2026-10-06T15:00:00.000Z", "updatedAt": "2026-10-06T15:00:00.000Z", "editedAt": null }
+  ]
+}
+```
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400 — `limit` fora de 1..50, cursor inválido,
+`types` inválido)
+
+#### POST /doctors/:id/comments (CRMLAB-192, D-332)
+
+Comenta um item da linha do tempo do médico. Mesmos perfis e escopo da linha do tempo
+(representante só na carteira dele → `404` fora; atendente → `403`).
+
+**Request:**
+```json
+{ "itemKind": "visit", "itemId": "a3e1…", "body": "Manda o material na sexta" }
+```
+- `itemKind`: `visit` · `interaction`; `itemId` uuid do item. Item inexistente, de outro tenant ou
+  de **outro médico** → `404 NOT_FOUND`.
+- `body` aparado, 1..2000 (`fields.body`). Campo a mais → `VALIDATION_ERROR` (schema estrito).
+- Item com 100 comentários → `VALIDATION_ERROR` (`fields.body`).
+- Vale em visita de qualquer status e em médico inativo.
+
+**Response (201):** o `DoctorTimelineComment`, cru. Audit `create_doctor_timeline_comment`
+(`entityType: "doctor_timeline_comment"`, `newValues: { doctorId, itemKind, itemId, body }`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403 — perfil)
+
+#### PATCH /doctors/:id/comments/:commentId
+
+**Request:** `{ "body": "texto novo" }` (obrigatório, mesmas regras do `POST`). **Só o autor**;
+outro usuário que vê o comentário → `403 FORBIDDEN` (`details.reason: "not_author"`). Comentário de
+outro médico, outro tenant ou fora do escopo → `404`. Grava `editedAt`.
+**Response (200):** o `DoctorTimelineComment` atualizado. Texto igual → 200 sem audit e sem
+`editedAt` novo; senão audit `update_doctor_timeline_comment` (`oldValues.body` → `newValues.body`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403)
+
+#### DELETE /doctors/:id/comments/:commentId
+
+**O autor ou um admin** (o gestor não exclui comentário de colega); outro → `403 FORBIDDEN`
+(`details.reason: "not_author"`). Apaga a linha. **Response (204).** Audit
+`delete_doctor_timeline_comment` com `oldValues` (texto apagado). Repetir → `404`.
+
+**Erros:** `NOT_FOUND` (404), `FORBIDDEN` (403)
+
+**Editar o relato pela ficha** usa `PATCH /visits/:id/report` (§14), sem rota nova.
 
 #### POST /doctors/:id/interactions
 
@@ -6915,6 +6989,127 @@ Parcial: `name?`, `color?`, `isActive?`, `sortOrder?` (inteiro ≥ 0). Sem mudan
 audit. **Response (200):** `VisitPurpose`. Audit `update_visit_purpose` (só o diff).
 
 **Erros:** `NOT_FOUND` (404, inexistente ou de outro tenant), `VALIDATION_ERROR`, `FORBIDDEN`
+
+---
+
+## 14b. Visit reports (Relatório de Visitação — CRMLAB-193, D-333)
+
+Tela `/reports/visitation` (PAGES.md §22d). Fórmulas em BUSINESS_RULES §15b. Shapes em
+`shared/types/visitation-report.types.ts`. **Representante, gestor e admin** (`VISITATION_ROLES`); a
+atendente recebe `403 FORBIDDEN` (`requiredRoles: ["representative","manager","admin"]`).
+Módulo próprio `/visitation-reports` (o `/reports` do §5c é só gestor/admin no router inteiro).
+
+**Escopo (D-333 item 5):** gestor/admin veem o laboratório; com `responsibleId`, exatamente o que
+aquele usuário veria. Para o **representante** o servidor recorta pelo escopo da D-329 (visitas de
+médico da carteira dele **ou** em que ele é o responsável; carteira = médicos dele) e **ignora**
+`responsibleId`. `responsibleId`/`purposeId` de outro tenant ou inexistente não dão erro: o recorte
+devolve zeros/listas vazias (nada cruza tenant — `withTenant` em toda query).
+
+### GET /visitation-reports/summary
+
+**Query Params:**
+```
+?from=2026-11-01&to=2026-11-30   // obrigatórios; dias de calendário de São Paulo, inclusivos; to ≥ from; ≤ 366 dias
+?responsibleId=<uuid>            // gestor/admin; ignorado para o representante
+?purposeId=<uuid>                // só visitas desta finalidade
+?abcClass=A|B|C                  // só médicos desta classe (sem classe nunca entra num filtro)
+?granularity=week|month          // evolução; omitido → week até 92 dias de período, month acima
+```
+
+**Response (200)** — `VisitationReport`:
+```json
+{
+  "period": { "from": "2026-11-01", "to": "2026-11-30" },
+  "granularity": "week",
+  "scope": "all",
+  "summary": {
+    "scheduled": 14, "completed": 22, "cancelled": 3, "notReceived": 2, "total": 41,
+    "reschedules": 5,
+    "completionRate": 81.5,
+    "averageDurationMinutes": 27.3, "durationSampleSize": 21,
+    "coverage": { "portfolioDoctors": 40, "visitedDoctors": 18, "rate": 45.0 }
+  },
+  "byRepresentative": [
+    {
+      "responsible": { "id": "7c3d…", "name": "Carla Souza" },
+      "portfolioDoctors": 12, "visitedDoctors": 7,
+      "coverage": { "portfolioDoctors": 12, "visitedDoctors": 7, "rate": 58.3 },
+      "coverageByClass": {
+        "A": { "portfolioDoctors": 2, "visitedDoctors": 2, "rate": 100.0 },
+        "B": { "portfolioDoctors": 3, "visitedDoctors": 2, "rate": 66.7 },
+        "C": { "portfolioDoctors": 7, "visitedDoctors": 3, "rate": 42.9 },
+        "unclassified": { "portfolioDoctors": 0, "visitedDoctors": 0, "rate": null }
+      },
+      "completed": 9, "cancelled": 1, "notReceived": 0, "reschedules": 2
+    }
+  ],
+  "byPurpose": [
+    { "purpose": { "id": "…", "name": "Visita", "color": "azul" }, "total": 30, "completed": 18 }
+  ],
+  "evolution": [
+    { "bucket": "2026-10-27", "total": 6, "completed": 4, "cancelled": 1, "notReceived": 0 }
+  ]
+}
+```
+- **Contagens** pelo status atual das visitas com `scheduledAt` no período. `scheduled` = ainda
+  `agendada`.
+- **`completionRate`** = `completed ÷ (completed + cancelled + notReceived) × 100`, uma casa;
+  `null` sem visita encerrada.
+- **`averageDurationMinutes`**: média de `checkOutAt − checkInAt` das `realizada` com os dois
+  (e check-out ≥ check-in), uma casa; `null` sem amostra. `durationSampleSize` = quantas entraram.
+- **`coverage`**: médicos **ativos** da carteira com ≥ 1 visita `realizada` no período (qualquer
+  responsável; respeita `purposeId`) ÷ médicos ativos da carteira (respeita `abcClass`). Sem
+  `responsibleId` (gestor), a carteira é o laboratório inteiro. `rate` com uma casa; `null` com
+  carteira vazia.
+- **`reschedules`**: linhas de `doctor_visit_reschedules` com `changedAt` no período, da visita no
+  escopo (e nos filtros de finalidade/ABC).
+- **`byRepresentative`**: usuários **ativos** de perfil elegível que são representantes, têm médico
+  na carteira ou foram responsáveis por visita no período; ordem por nome. Representante (ou gestor com
+  `responsibleId`) → só aquela linha. Carteira/cobertura pela carteira do usuário; `completed`,
+  `cancelled`, `notReceived` e `reschedules` pelas visitas em que **ele é o responsável**.
+- **`byPurpose`**: só finalidades com visita no período; ordem por `total` desc, depois nome.
+- **`evolution`**: todos os baldes que tocam o período (semana começando na segunda, ou mês), zerados
+  quando vazios; `bucket` = 1º dia do balde (pode ser anterior a `from`).
+
+**Erros:** `VALIDATION_ERROR` (400 — data ausente/inválida, `to < from`, período > 366 dias, uuid
+inválido, `abcClass`/`granularity` fora da lista), `FORBIDDEN` (403 — `attendant`, `platform_operator`)
+
+### GET /visitation-reports/stale-doctors
+
+**Query Params:**
+```
+?days=60               // X: inteiro 1–730, padrão 60
+?responsibleId=<uuid>  // gestor/admin: só a carteira deste usuário; ignorado para o representante
+?abcClass=A|B|C
+```
+
+**Response (200)** — `VisitationReportStaleResponse`:
+```json
+{
+  "days": 60,
+  "referenceDate": "2026-11-22",
+  "doctors": [
+    {
+      "id": "…", "name": "Dra. Júlia Prado", "crm": "12345", "crmUf": "SC", "specialty": "Pediatria",
+      "abcClass": "A", "responsible": { "id": "7c3d…", "name": "Carla Souza" },
+      "lastVisitAt": null, "daysSinceLastVisit": null
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}
+```
+- Médicos **ativos** do escopo (carteira do representante; com `responsibleId`, a carteira daquele
+  usuário; sem, o laboratório) cuja última visita `realizada` (qualquer responsável) tem
+  `daysSinceLastVisit > days`, **ou nunca visitados** (`lastVisitAt: null`).
+- `lastVisitAt` = `checkOutAt` da última realizada (realizada sempre tem check-out — CHECK da migração 050).
+  `daysSinceLastVisit` = dias de calendário de São Paulo entre essa data e `referenceDate`.
+- **Ordem:** `abcClass` A, B, C, `null`; dentro da classe, nunca visitado primeiro, depois
+  `daysSinceLastVisit` desc, depois nome.
+- Até 1000 linhas; `total` = antes do corte; `truncated` = cortou.
+
+**Erros:** `VALIDATION_ERROR` (400 — `days` fora de 1–730, uuid inválido, `abcClass` inválida),
+`FORBIDDEN` (403 — `attendant`, `platform_operator`)
 
 ---
 

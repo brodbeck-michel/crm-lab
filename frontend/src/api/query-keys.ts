@@ -23,6 +23,8 @@ import type {
   ResponseTimeQuery,
   SearchMessagesQuery,
   SalesSummaryQuery,
+  VisitationReportQuery,
+  VisitationReportStaleQuery,
 } from '@crm-lab/shared';
 import type { ExecutiveReportQuery } from './reports';
 
@@ -226,6 +228,8 @@ export const queryKeys = {
   doctor: (id: string) => ['doctors', 'detail', id] as const,
   /** ['doctors', 'timeline', id] — linha do tempo da ficha (CRMLAB-89, D-261) */
   doctorTimeline: (id: string) => ['doctors', 'timeline', id] as const,
+  /** Uma lista filtrada do feed (CRMLAB-192); `doctorTimeline(id)` é o prefixo de todas. */
+  doctorTimelineFiltered: (id: string, filter: string) => ['doctors', 'timeline', id, filter] as const,
   /** ['doctors', 'specialties', active] — lista de especialidades (CRMLAB-188, D-328) */
   doctorSpecialties: (active?: boolean) => ['doctors', 'specialties', active ?? 'all'] as const,
   /** ['doctors', 'picker', term] — busca do médico no formulário da proposta (CRMLAB-188) */
@@ -236,6 +240,10 @@ export const queryKeys = {
   visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
   /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */
   visit: (id: string) => ['visits', 'detail', id] as const,
+  /** ['visitation-reports', 'summary', query] — Relatório de Visitação (§22d, CRMLAB-193) */
+  visitationReport: (query: VisitationReportQuery) => ['visitation-reports', 'summary', query] as const,
+  /** ['visitation-reports', 'stale', query] — médicos sem visita há mais de X dias (CRMLAB-193) */
+  visitationStaleDoctors: (query: VisitationReportStaleQuery) => ['visitation-reports', 'stale', query] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */
@@ -274,6 +282,7 @@ export const queryScopes = {
   attendants: ['attendants'] as const,
   doctors: ['doctors'] as const,
   visits: ['visits'] as const,
+  visitationReports: ['visitation-reports'] as const,
 } as const;
 
 /**

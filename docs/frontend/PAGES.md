@@ -1843,13 +1843,45 @@ Item **"Carteiras"** (ícone `Briefcase`) do grupo "Visitação Médica", depois
 `pages/Visitation/Portfolios.tsx`.
 
 - **Lista de carteiras:** uma linha por responsável (nome, perfil, "N médicos · M ativos") e, no fim,
-  a linha **"Sem responsável / responsável inelegível"** com o balde `unassigned`. Quando o
-  servidor mandar `abc` (CRMLAB-188 integrado), a linha mostra "A n · B n · C n"; sem a chave, nada.
+  a linha **"Sem responsável / responsável inelegível"** com o balde `unassigned`. **Corte A/B/C
+  (CRMLAB-193, D-333 item 7):** cada linha — inclusive o balde — mostra "A n · B n · C n" dos médicos
+  **ativos**, mais "sem classe n" quando houver médico ainda não classificado. Sem a chave `abc`
+  (servidor antigo), nada.
 - **Clicar numa linha** abre, ao lado (embaixo no celular), os médicos daquela carteira (até 100,
   por nome) com **checkbox** em cada um e "Selecionar todos".
 - **[Transferir selecionados]** abre o `Modal` "Transferir médicos": `Select` "Novo responsável"
   (perfis elegíveis, menos o dono atual), checkbox "Levar junto as visitas futuras agendadas" e
   [Transferir]. Sucesso: toast "N médicos transferidos (M visitas)" e as listas recarregam.
+
+### 22d. Relatório de Visitação (`/reports/visitation`) — representante (os dele) · gestor · admin (CRMLAB-193, D-333)
+
+Item **"Relatório de Visitação"** (ícone `FileBarChart2`, o mesmo de Resultados — `NavIcon`
+`visit-report`) no grupo **Gestão**, depois de "Busca Ativa"; `requiredRoles: VISITATION` (a
+atendente não vê, e a rota redireciona). Fonte: `GET /visitation-reports/summary` e
+`GET /visitation-reports/stale-doctors` (API_CONTRACTS.md §14b); finalidades de `GET
+/settings/visit-purposes`, representantes de `useVisitationResponsibles`. Fórmulas: BUSINESS_RULES
+§15b. Arquivo `pages/Reports/Visitation.tsx`.
+
+- **Barra de filtro** (mesmo padrão de Resultados): `PeriodFilter` (padrão: **mês corrente inteiro**,
+  dia 1 ao último dia), `Select` **Representante** (só gestor/admin; "Todos"), `Select`
+  **Finalidade** ("Todas") e `Select` **Curva ABC** ("Todas | A | B | C"). Para o representante, um
+  texto "Seus números: sua carteira e as visitas em que você é o responsável." no lugar do seletor.
+- **Cards** (`ResultsKpiCard`, grade de 4 + 3): Agendadas, Realizadas, Canceladas, Não recebidas;
+  **Taxa de realização** (com barra de progresso), **Duração média** ("27 min", legenda "N visitas com
+  check-in e check-out") e **Cobertura** (barra; legenda "V de C médicos ativos visitados"). `null` →
+  "—".
+- **Por representante** (`DataTable`): Representante, Carteira, Visitados, Cobertura, A, B, C
+  (cada um "v/c"), Realizadas, Reagend., Cancel. Botão **[Exportar CSV]**.
+- **Visitas por finalidade:** barras horizontais (Recharts, `components/analytics/chartTokens`),
+  cada barra na cor `--color-purpose-<chave>-dot` da finalidade. Vazio → "Sem visita no período."
+- **Evolução:** linhas (Recharts) de total e realizadas por balde; `SegmentedControl` Semana | Mês.
+- **Médicos sem visita há mais de X dias:** campo numérico X (padrão 60, 1–730), lista
+  (`DataTable`): Médico (link para a ficha), Classe, Responsável, Última visita, Dias sem visita
+  ("Nunca visitado" quando nulo). Respeita Representante e Curva ABC, não o período nem a
+  finalidade. Botão **[Exportar CSV]**. Aviso quando `truncated`.
+- **CSV** gerado no navegador (`lib/csv.ts`): `;`, UTF-8 com BOM, decimal com vírgula, células
+  iniciadas por `= + - @` prefixadas com `'`.
+- Período inválido: aviso do próprio `PeriodFilter` e nenhuma consulta.
 
 ### 22b. Ficha do médico (`/visitation/doctors/:id`) — representante (carteira) · gestor · admin (CRMLAB-89, D-261 · D-329)
 
@@ -1881,6 +1913,21 @@ VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors
   horário), **Parceria**, **Endereço** (estruturado; sem ele, o texto antigo) e **Secretária** (com
   link WhatsApp). Selo ABC no topo, com o mesmo tooltip da lista. Seção sem nenhum dado mostra
   "Não informado".
+- **CRMLAB-192 (D-332) — a linha do tempo vira feed** (itens em `pages/Visitation/DoctorFeed.tsx`):
+  - **Filtro** acima da lista: chips de escolha única **Tudo · Visitas · Ligações · WhatsApp ·
+    E-mail** (`role="radio"`); trocar recomeça a lista com `?types=`.
+  - **Visita:** `PersonAvatar` + nome do responsável, data/hora, finalidade (`PurposeDot` + nome) ·
+    modo, `StatusBadge` (selo da Agenda). Linha "Check-in às 13:20 de 06/10 · Check-out às 13:55 de
+    06/10 · 35 min" (só o que houver). **Relato** com rótulos "O que foi apresentado", "Feedback do
+    médico", "Objeções" (campo vazio não aparece; cada campo `line-clamp-4`) e [Ver mais]/[Ver menos]
+    quando algum passa de 4 linhas. Anexos: imagem em **miniatura** 64×64 (baixada pelo download
+    autenticado) e PDF com ícone + nome; clicar abre como no modal da visita (PDF em nova aba,
+    imagem baixa). [Editar relato] (só `agendada`/`realizada`) troca o relato por três `TextArea` +
+    [Cancelar] [Salvar relato] (`PATCH /visits/:id/report`, só o que mudou). [Abrir visita] continua.
+  - **Comentários** embaixo de cada item (visita e registro): lista "Nome · data · (editado)" + texto;
+    [Editar] só no próprio, [Excluir] no próprio ou para o admin (`window.confirm`). Campo
+    "Escreva um comentário" (até 2000) + [Comentar]. Editar troca o texto por `TextArea` + [Salvar]
+    [Cancelar].
 
 #### Formulário de proposta — médico do cadastro (CRMLAB-188, D-328)
 Em Novo orçamento (`SummaryColumn`) e na edição da proposta (`ProposalModal`), o campo "Médico
@@ -1916,8 +1963,9 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   Fechar limpa o parâmetro.
 - **Topo:** `PageHeader` compacto "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é
   a atual; senão a segunda às 9h).
-- **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana") +
-  período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026"); à direita, o seletor Semana | Lista.
+- **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana"; na
+  Mês, "Mês anterior"/"Próximo mês") + período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026";
+  na Mês, "outubro de 2026"); à direita, o seletor **Semana | Mês | Lista** (Mês: CRMLAB-191, D-331).
 - **Filtros:** chips de status (são filtro e legenda: ponto + rótulo + contagem da semana inteira;
   todos ligados; clicar desliga), chips de **finalidade** (CRMLAB-190, D-330: mesma mecânica —
   ponto na cor da finalidade + nome + contagem da semana; multisseleção, todos ligados, clicar
@@ -1935,6 +1983,24 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   clicada; o "+" escondido de cada hora faz o mesmo pelo teclado. Semana vazia: cartão "Nenhuma
   visita nesta semana" sobre a grade (com filtros: "Nenhuma visita com esses filtros" + [Limpar
   filtros]). Carregando: esqueleto.
+- **Mês (CRMLAB-191, D-331):** grade seg–dom com as semanas que tocam o mês (4–6 linhas; dias de
+  fora do mês esmaecidos, com as visitas deles). Um `GET /visits` cobre da segunda da 1ª semana à
+  segunda depois da última (≤ 42 dias). Cada dia: número (hoje no círculo da cor do tema; clicar
+  leva à Semana do dia) e até **3 cartões** na cor da finalidade — ícone de status + "HH:MM Médico"
+  + avatar do responsável (finalidade e status no `aria-label`/`title`; cancelada/não recebeu
+  riscado e com opacidade). Com 4+, mostra 2 e **"+N"**, que leva para a **Semana** daquele dia.
+  Clicar no cartão abre a visita (coluna de resumo ou `Modal`); clicar no vazio do dia abre "Nova
+  visita" naquele dia às 09:00. Filtros e chips valem sobre o mês carregado; a coluna de resumo
+  diz "Resumo do mês". Mês vazio: cartão "Nenhuma visita neste mês" (com filtros, o de sempre).
+- **Arrastar para reagendar (desktop, CRMLAB-191, D-331):** HTML5 drag-and-drop nativo. Só fica
+  arrastável (`draggable`, cursor de mão) a visita **agendada sem check-in**; o representante, só as
+  em que é o responsável. Na **Mês**, soltar em outro dia mantém a hora; na **Semana**, soltar troca
+  dia e hora com **encaixe de 30 min** (topo do cartão, meia hora mais próxima, 07:00–20:30). A
+  coluna/dia sob o cartão fica destacada. Soltar no mesmo lugar não faz nada. O cartão muda na hora
+  e chama `POST /visits/:id/reschedule` com `reason: null`; sucesso → toast "Visita reagendada para
+  Qui, 08/10 às 14:00" com **[Desfazer]** (8 s, reagenda de volta). 409 → toast "Esta visita não
+  pode mais ser reagendada (já tem check-in ou foi encerrada)." e o cartão volta; erro de rede
+  volta o cartão e mostra o erro padrão. Teclado: o [Reagendar] continua sendo o caminho.
 - **Lista:** a mesma semana; cabeçalho do dia fixo ("Quinta, 01 de out." + contagem); linha em
   colunas Horário · Médico (+ finalidade, com o ponto na cor dela) · Local (clínica do médico ou,
   sem ela, o tipo da visita) · Responsável (avatar + nome) · selo do status. A linha tem uma
@@ -1955,7 +2021,9 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   visita; hoje tingido; o selecionado na cor do tema); título do dia + contagem; lista do dia em
   cartões **na cor da finalidade** (ícone + rótulo do status no topo, nome do médico, finalidade,
   especialidade · local, responsável; cancelada/não recebeu riscado e com opacidade). Tocar abre
-  o `Modal` "Visita".
+  o `Modal` "Visita". Seletor **Semana | Mês** abaixo do cabeçalho (CRMLAB-191, D-331): na Mês, a
+  faixa vira o mês em grade (‹ › "Mês anterior"/"Próximo mês", um **ponto** por dia com visita,
+  dias de fora do mês esmaecidos) e tocar no dia mostra a lista daquele dia embaixo. Sem arrastar.
 - **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado),
   **Finalidade*** (CRMLAB-190: só as ativas; a atual inativa aparece como "Nome (inativa)"; abre
   vazia ao criar, e o "Agendar retorno" traz a da visita anterior se ainda ativa), Tipo (modo),

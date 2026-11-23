@@ -417,13 +417,15 @@ describe('carteiras (GET /doctors/portfolios)', () => {
     const empty = await createUser({ tenantId: tenantA.id, role: 'representative', name: 'Zeca Rep', db });
     const body = (await app.agent.get(`${DOCTORS}/portfolios`).set(app.auth(manager)).expect(200))
       .body as ListDoctorPortfoliosResponse;
+    // CRMLAB-193 (D-333 item 7): `abc` sempre vem; médico sem classe calculada conta em `unclassified`.
+    const abc = (unclassified: number) => ({ A: 0, B: 0, C: 0, unclassified });
     expect(body.portfolios).toEqual([
-      { responsible: { id: carla.id, name: 'Carla Rep', role: 'representative' }, doctorCount: 1, activeDoctorCount: 1 },
-      { responsible: { id: diego.id, name: 'Diego Rep', role: 'representative' }, doctorCount: 1, activeDoctorCount: 1 },
-      { responsible: { id: empty.id, name: 'Zeca Rep', role: 'representative' }, doctorCount: 0, activeDoctorCount: 0 },
+      { responsible: { id: carla.id, name: 'Carla Rep', role: 'representative' }, doctorCount: 1, activeDoctorCount: 1, abc: abc(1) },
+      { responsible: { id: diego.id, name: 'Diego Rep', role: 'representative' }, doctorCount: 1, activeDoctorCount: 1, abc: abc(1) },
+      { responsible: { id: empty.id, name: 'Zeca Rep', role: 'representative' }, doctorCount: 0, activeDoctorCount: 0, abc: abc(0) },
     ]);
-    // Órfão + atendente; a chave `abc` só vem com o CRMLAB-188.
-    expect(body.unassigned).toEqual({ doctorCount: 2, activeDoctorCount: 2 });
+    // Órfão + atendente.
+    expect(body.unassigned).toEqual({ doctorCount: 2, activeDoctorCount: 2, abc: abc(2) });
   });
 
   it('não conta médico de outro tenant', async () => {

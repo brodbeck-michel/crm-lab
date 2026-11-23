@@ -4355,3 +4355,63 @@ BUSINESS_RULES §12–§15, SECURITY "Autorização", PAGES §22–§23 e §22c.
   `GET /doctors/lookup` (D-329 item 12): todo papel, sem carteira, só ativos, shape mínimo. Testes
   `tests/doctors/doctor-lookup.spec.ts` + inventário (142 rotas). O corte A/B/C nas Carteiras ainda não
   foi ligado (o `abc` segue opcional no shape) — fica para um card próprio.
+
+### 🔄 CRMLAB-191 — Agenda: visão Mês e arrastar para reagendar (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-191-agenda-mes-arrastar` (épico Visitação v2, CRMLAB-187). Contrato: D-331,
+PAGES §23 (Mês, arrastar, celular), COMPONENTS "Toast" (`action`). API_CONTRACTS e SCHEMA sem mudança —
+o arrastar usa o `POST /visits/:id/reschedule` existente; nenhuma migração.
+- **ui:** seletor Semana | Mês | Lista; `AgendaMonth.tsx` (grade seg–dom com semanas de borda numa só
+  consulta ≤ 42 dias, até 3 cartões por dia, "+N" leva à Semana do dia, navegação por mês, "Resumo do
+  mês" na coluna); arrastar e soltar HTML5 nativo (`agenda-drag.ts`, mesmo mecanismo do funil, sem
+  dependência nova) na Mês (mantém a hora) e na Semana (encaixe de 30 min pelo topo do cartão);
+  só agendada sem check-in, e o representante só a dele; otimista com reversão em 409/erro de rede;
+  toast com [Desfazer] (reagenda de volta). Celular: Semana | Mês, mês em grade com ponto por dia e
+  lista do dia ao tocar, sem arrastar. `Toast` ganhou `action`.
+- **testes:** `AgendaMonthDrag.spec.tsx` (13: grade, +N, navegação, filtros, arrastar na Mês e na
+  Semana com encaixe, bloqueio por status/check-in/representante, 409 e rede revertem, desfazer,
+  celular) + `Toast.spec` (ação).
+
+### ✅ CRMLAB-192 — Feed do médico: relato completo, comentários, editar relato e filtro (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-192-feed-medico` (épico Visitação v2, CRMLAB-187). Contrato: D-332, SCHEMA §38a,
+API_CONTRACTS §13, BUSINESS_RULES §15, PAGES §22b, SERVICES §32, SECURITY "Visitação Médica".
+- **db:** `074_doctor_timeline_comments.sql` — comentários com `visit_id` **ou** `interaction_id`
+  (`CHECK` de exatamente um, FKs `ON DELETE CASCADE`), `author_id` (`SET NULL`), `body` 1..2000,
+  `edited_at`; RLS na mesma migração. Teste `tests/db/migration-074-doctor-timeline-comments.spec.ts`.
+- **shared:** `doctor-timeline.types.ts` — `DOCTOR_TIMELINE_FILTERS` (+ rótulos), `DoctorTimelineComment`,
+  `Create/UpdateDoctorTimelineCommentRequest`, `doctorTimelineCommentPermissions`, teto de 100 por item;
+  visita do feed com `report`, `nextVisitDate`, `attachments`; `comments` em todo item; `types` na query.
+- **api:** `GET /doctors/:id/timeline?types=` (filtro no SQL, antes do cursor); `POST /doctors/:id/comments`,
+  `PATCH|DELETE /doctors/:id/comments/:commentId` (escopo D-329; só o autor edita; autor ou admin exclui;
+  `403 not_author`; audit `create_/update_/delete_doctor_timeline_comment`). Editar relato pela ficha reusa
+  `PATCH /visits/:id/report`. Testes `tests/doctors/doctor-timeline-feed.spec.ts` + inventário (142 → 145).
+- **ui:** `pages/Visitation/DoctorFeed.tsx` (novo) — filtro Tudo/Visitas/Ligações/WhatsApp/E-mail, visita
+  com avatar, finalidade/modo, selo, check-in/out + duração, relato com rótulos e "Ver mais", anexos em
+  miniatura/ícone, [Editar relato], comentários (criar/editar/excluir). `VisitRecord.tsx` exporta
+  `openVisitAttachment`. Testes em `DoctorProfile.spec.tsx`.
+- **Decisões conservadoras (D-332):** gestor não exclui comentário de colega (só autor e admin);
+  comentários embutidos no item com teto de 100 (sem rota paginada); "Ver mais" por estimativa de linhas
+  (4 linhas, 90 caracteres/linha); comentário aceito em visita encerrada e médico inativo; relato pela ficha
+  edita só os três textos (data de retorno segue na Agenda).
+
+### ✅ CRMLAB-193 — Relatório de Visitação + corte A/B/C nas Carteiras (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-193-relatorio-visitas` (épico Visitação v2, CRMLAB-187). Contrato: D-333,
+BUSINESS_RULES §15b (fórmulas), API_CONTRACTS §13 (`portfolios.abc`) e §14b, PAGES §22c e §22d. Sem migração.
+- **shared:** `visitation-report.types.ts` (`VisitationReport*`, constantes de período/X/granularidade);
+  comentário de `DoctorPortfolioAbc` (agora sempre preenchido, só ativos).
+- **api:** módulo `/visitation-reports` (`visitation-report.{routes,service,repository}.ts`):
+  `GET /visitation-reports/summary` (cards, por representante, por finalidade, evolução semana/mês) e
+  `GET /visitation-reports/stale-doctors` (esquecidos, X padrão 60). Representante/gestor/admin; atendente
+  403; representante recortado pela D-329 com `responsibleId` ignorado. `GET /doctors/portfolios` passa a
+  mandar `abc` (ativos; sem classe em `unclassified`). Testes `tests/visits/visitation-report.spec.ts`
+  (fórmulas, bordas de período em São Paulo, período vazio, check-in sem check-out fora da média,
+  reagendamentos, inativo fora da cobertura, nunca visitado, limite de X, escopo por perfil, isolamento,
+  `portfolios.abc`) + `representative-scope.spec` (abc) + inventário (144 rotas).
+- **ui:** `/reports/visitation` no grupo Gestão (`pages/Reports/Visitation.tsx`, `api/visitation-reports.ts`,
+  `lib/csv.ts`), filtros período/representante/finalidade/ABC, cards, tabela, barras por finalidade (cor
+  da finalidade), evolução, esquecidos e CSV; Carteiras mostra o ABC também no balde "sem responsável".
+  Testes `Reports/Visitation.spec`, `lib/csv.spec`, `Portfolios.spec`, `route-config.spec`.
+- **Pendências/riscos:** médico sem classe (nulo até o recálculo diário) fica à parte, não vira C (D-333
+  item 6); período usa UTC−3 fixo (sem horário de verão, como o resto do sistema).

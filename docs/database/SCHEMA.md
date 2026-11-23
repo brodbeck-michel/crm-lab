@@ -2221,6 +2221,43 @@ CREATE INDEX idx_doctor_interactions_updated_by ON doctor_interactions(updated_b
   scheduled_at)`.
 - Migração **única** (tabela + policy), sem backfill.
 
+### 38a. `doctor_timeline_comments` (migração 074 — CRMLAB-192, D-332)
+Comentários nos itens da linha do tempo do médico — uma visita (`doctor_visits`) **ou** um registro
+manual (`doctor_interactions`). Referência polimórfica **segura**: duas colunas com FK de verdade e
+`CHECK` de exatamente uma preenchida (nada de `item_type` + `item_id` sem FK).
+
+```sql
+CREATE TABLE doctor_timeline_comments (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  visit_id       UUID REFERENCES doctor_visits(id) ON DELETE CASCADE,
+  interaction_id UUID REFERENCES doctor_interactions(id) ON DELETE CASCADE,
+  author_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+  body           TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),   -- trigger set_updated_at
+  edited_at      TIMESTAMPTZ,                          -- NULL = nunca editado
+  CONSTRAINT doctor_timeline_comments_one_target
+    CHECK ((visit_id IS NULL) <> (interaction_id IS NULL)),
+  CONSTRAINT doctor_timeline_comments_body_check
+    CHECK (length(trim(body)) > 0 AND length(body) <= 2000)
+);
+CREATE INDEX idx_doctor_timeline_comments_visit ON doctor_timeline_comments(visit_id, created_at)
+  WHERE visit_id IS NOT NULL;
+CREATE INDEX idx_doctor_timeline_comments_interaction ON doctor_timeline_comments(interaction_id, created_at)
+  WHERE interaction_id IS NOT NULL;
+CREATE INDEX idx_doctor_timeline_comments_tenant_id ON doctor_timeline_comments(tenant_id);
+CREATE INDEX idx_doctor_timeline_comments_author_id ON doctor_timeline_comments(author_id);
+-- ENABLE ROW LEVEL SECURITY + policy doctor_timeline_comments_tenant_isolation (mesmo arquivo)
+```
+
+- **Excluir apaga a linha**; o texto apagado fica no audit `delete_doctor_timeline_comment`.
+  Excluir um registro manual leva os comentários dele (`CASCADE`); visita não se apaga.
+- O item tem de ser do **mesmo médico** da rota e do mesmo tenant — conferido no service, sob RLS
+  (a visita/registro de outro tenant nem aparece para a consulta).
+- Migração **única** (tabela + policy), sem backfill. Testada em
+  `tests/db/migration-074-doctor-timeline-comments.spec.ts`.
+
 ### 39. `conversation_participants` e `messages.attributed_to` (migração 053 — CRMLAB-93, D-263)
 Participantes da conversa: colegas chamadas para dentro do atendimento sem virar donas.
 
@@ -2822,6 +2859,7 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `scans` | ✅ | idem |
 | `doctor_specialties` | ✅ | migração `070_doctor_profile_expanded.sql` (tabela + policy no mesmo arquivo — CRMLAB-188), `tests/doctors/doctor-specialties.spec.ts` |
 | `visit_purposes` | ✅ | migração `073_visit_purposes.sql` (tabela + policy no mesmo arquivo — CRMLAB-190), `tests/db/migration-073-visit-purposes.spec.ts` |
+| `doctor_timeline_comments` | ✅ | migração `074_doctor_timeline_comments.sql` (tabela + policy no mesmo arquivo — CRMLAB-192), `tests/db/migration-074-doctor-timeline-comments.spec.ts` |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**

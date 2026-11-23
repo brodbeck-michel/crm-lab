@@ -86,7 +86,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     expect(groups.map((g) => g.label)).toEqual(NAV_GROUPS.map((g) => g.label));
   });
 
-  it('grupo Gestão: Decisões, Resultados, Busca Ativa e Gestão da Operação (CRMLAB-150, D-321)', () => {
+  it('grupo Gestão: Decisões, Resultados, Busca Ativa, Relatório de Visitação e Gestão da Operação (CRMLAB-150, D-321 · CRMLAB-193)', () => {
     const { groups } = sidebarSectionsFor('admin');
     const gestao = groups.find((g) => g.id === 'gestao');
 
@@ -94,6 +94,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
       'Decisões',
       'Resultados',
       'Busca Ativa',
+      'Relatório de Visitação',
       'Gestão da Operação',
     ]);
   });
@@ -256,9 +257,18 @@ describe('Visitação por perfil (CRMLAB-189, D-329)', () => {
   it('fora da Visitação o representante tem o trilho da atendente (sem telas gestor+)', () => {
     const rep = sidebarRoutesFor('representative')
       .map((r) => r.path)
-      .filter((path) => !path.startsWith('/visitation'));
+      .filter((path) => !path.startsWith('/visitation') && path !== '/reports/visitation');
     const attendant = sidebarRoutesFor('attendant').map((r) => r.path);
     expect(rep.sort()).toEqual([...attendant].sort());
+  });
+
+  it('Relatório de Visitação (CRMLAB-193, D-333): representante vê no grupo Gestão; atendente não', () => {
+    const repGestao = sidebarSectionsFor('representative').groups.find((g) => g.id === 'gestao');
+    expect(repGestao?.items.map((r) => r.path)).toEqual(['/reports/visitation']);
+    expect(sidebarRoutesFor('attendant').map((r) => r.path)).not.toContain('/reports/visitation');
+    for (const role of ['manager', 'admin'] as const) {
+      expect(sidebarRoutesFor(role).map((r) => r.path)).toContain('/reports/visitation');
+    }
   });
 
   it('gestor e admin veem Agenda, Médicos e Carteiras', () => {

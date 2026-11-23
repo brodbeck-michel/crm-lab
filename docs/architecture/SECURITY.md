@@ -98,6 +98,9 @@ A **única credencial que não é de usuário**: o celular da recepção pareado
   linha do tempo e registro manual. Fora do escopo → `404`.
 - **Escrita não amplia o escopo:** o representante não cria médico em outra carteira, não agenda
   para médico de outra carteira, não põe outra pessoa como responsável e não transfere carteira.
+- **Comentários do feed (CRMLAB-192, D-332):** quem alcança a ficha (escopo acima) lê e comenta;
+  item ou comentário de outro médico → `404`. Editar: só o autor; excluir: o autor ou o admin —
+  recusa a quem vê o comentário é `403` (`reason: "not_author"`), porque ele já é visível.
 - **Gestor/admin:** sem recorte dentro do tenant; só eles transferem carteira (`POST /doctors/transfer`,
   auditado por médico e por visita) e veem `GET /doctors/portfolios`.
 

@@ -86,7 +86,7 @@ interface VisitRow {
   attachment_count: number | string;
 }
 
-interface AttachmentRow {
+export interface AttachmentRow {
   id: string;
   file_name: string;
   mime_type: string;
@@ -153,7 +153,7 @@ export function toVisit(row: VisitRow): Visit {
   };
 }
 
-function toAttachment(row: AttachmentRow): VisitAttachment {
+export function toAttachment(row: AttachmentRow): VisitAttachment {
   return {
     id: row.id,
     fileName: row.file_name,

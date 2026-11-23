@@ -48,6 +48,7 @@ import { doctorModule } from '../../src/controllers/doctor.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { visitModule } from '../../src/controllers/visit.routes.js';
 import { visitPurposeModule } from '../../src/controllers/visit-purpose.routes.js';
+import { visitationReportModule } from '../../src/controllers/visitation-report.routes.js';
 import { funnelRulesModule } from '../../src/controllers/funnel-rules.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
@@ -138,6 +139,7 @@ const LAB_MODULES = [
   doctorModule,
   visitModule,
   visitPurposeModule, // CRMLAB-190
+  visitationReportModule, // CRMLAB-193
   examModule,
   funnelRulesModule,
   insuranceModule,
@@ -202,6 +204,8 @@ interface Lab {
   visitAttachment: { id: string };
   /** Registro manual (ligacao) na linha do tempo de `doctor` (CRMLAB-89, D-261). */
   doctorInteraction: { id: string };
+  /** Comentario do gestor em `visit` na linha do tempo de `doctor` (CRMLAB-192, D-332). */
+  doctorComment: { id: string };
   /** Especialidade da lista do laboratorio (CRMLAB-188, D-328). */
   doctorSpecialty: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
@@ -704,6 +708,33 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 204,
   },
+  // --- feed do medico (CRMLAB-192, D-332): comentarios; a sonda e do gestor (autor) ---
+  {
+    name: 'POST /doctors/:id/comments',
+    method: 'post',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments`,
+    body: (l) => ({ itemKind: 'visit', itemId: l.visit.id, body: 'Sonda de isolamento' }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    name: 'PATCH /doctors/:id/comments/:commentId',
+    method: 'patch',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments/${l.doctorComment.id}`,
+    body: () => ({ body: 'Sonda de isolamento' }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /doctors/:id/comments/:commentId',
+    method: 'delete',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments/${l.doctorComment.id}`,
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 204,
+  },
   // --- cadastro ampliado (CRMLAB-188, D-328): lista de especialidades e curva ABC ---
   {
     name: 'GET /doctors/specialties',
@@ -804,6 +835,21 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- relatório de visitação (CRMLAB-193, D-333): representante/gestor/admin ---
+  {
+    name: 'GET /visitation-reports/summary',
+    method: 'get',
+    path: () => '/api/v1/visitation-reports/summary?from=2026-10-01&to=2026-10-31',
+    actor: 'manager',
+    addressable: false,
+  },
+  {
+    name: 'GET /visitation-reports/stale-doctors',
+    method: 'get',
+    path: () => '/api/v1/visitation-reports/stale-doctors',
+    actor: 'manager',
+    addressable: false,
+  },
   // --- finalidades da visita (CRMLAB-190, D-330): todos leem, gestor+ escreve ---
   {
     name: 'GET /settings/visit-purposes',
@@ -1430,6 +1476,15 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     ),
   );
   const visit = { id: visitRow.rows[0]?.id as string };
+
+  const doctorCommentRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_timeline_comments (tenant_id, visit_id, author_id, body)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [tenant.id, visit.id, manager.id, secret ? BETA_SECRETS.visit : `Comentario ${prefix}`],
+    ),
+  );
+  const doctorComment = { id: doctorCommentRow.rows[0]?.id as string };
   const visitPurpose = { id: await visitPurposeId(tenant.id, 'Visita', db) };
 
   const checkedInRow = await db.withoutTenant((tx) =>
@@ -1538,6 +1593,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     checkedInVisit,
     visitAttachment,
     doctorInteraction,
+    doctorComment,
     doctorSpecialty,
     media,
     message,
@@ -1626,7 +1682,7 @@ describe('inventario de rotas de laboratorio', () => {
     expect(declaredRoutes()).toEqual([...LAB_ROUTES].map((r) => r.name).sort());
   });
 
-  it('sao 142 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
+  it('sao 147 rotas de laboratorio e toda rota com `:id` entra na varredura de 404', () => {
     // Onda 6 somou 9: as 6 de `/patients`, `GET|PATCH /settings/channels` e
     // `GET /operations/overview`. Onda 7 soma 9: as 3 de `/insurances`, as 2
     // de `GET|PUT /exams/:id/prices` (preco por convenio) e as 4 de
@@ -1683,7 +1739,9 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-190/D-330 soma 3: `GET|POST /settings/visit-purposes` e
     // `PATCH /settings/visit-purposes/:id`.
     // CRMLAB-189/D-329 soma 3: `GET /doctors/portfolios`, `POST /doctors/transfer` e `GET /doctors/lookup`.
-    expect(LAB_ROUTES).toHaveLength(142);
+    // CRMLAB-192/D-332 soma 3: `POST /doctors/:id/comments` e `PATCH|DELETE /doctors/:id/comments/:commentId`.
+    // CRMLAB-193/D-333 soma 2: `GET /visitation-reports/summary` e `GET /visitation-reports/stale-doctors`.
+    expect(LAB_ROUTES).toHaveLength(147);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

@@ -38,7 +38,8 @@ export type NavIcon =
   | 'visitation'
   | 'doctors'
   | 'agenda'
-  | 'portfolios';
+  | 'portfolios'
+  | 'visit-report';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'] as const;
@@ -232,6 +233,15 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: MANAGER_PLUS,
     inSidebar: true,
     icon: 'active-search',
+    group: 'gestao',
+  },
+  {
+    // CRMLAB-193 (D-333): relatório da Visitação no grupo Gestão; o representante vê os dele.
+    path: '/reports/visitation',
+    label: 'Relatório de Visitação',
+    requiredRoles: VISITATION,
+    inSidebar: true,
+    icon: 'visit-report',
     group: 'gestao',
   },
 

@@ -8,6 +8,7 @@ import {
   VISIT_ATTACHMENTS_MAX,
   type UpdateVisitReportRequest,
   type Visit,
+  type VisitAttachment,
   type VisitDetail,
   type VisitType,
 } from '@crm-lab/shared';
@@ -310,6 +311,32 @@ function ReadOnly({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/**
+ * Abre um anexo da visita pelo download autenticado: PDF em nova aba, imagem
+ * baixa com o nome original (como o DocumentCard). Também usado pelo feed da
+ * ficha do médico (CRMLAB-192, D-332). Lança se o download falhar.
+ */
+export async function openVisitAttachment(
+  visitId: string,
+  attachment: Pick<VisitAttachment, 'id' | 'fileName' | 'mimeType'>,
+): Promise<void> {
+  const { blob, fileName: served } = await visitsApi.downloadAttachment(visitId, attachment.id);
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = objectUrl;
+  if (attachment.mimeType === 'application/pdf') {
+    anchor.target = '_blank';
+    anchor.rel = 'noreferrer';
+  } else {
+    anchor.download = served ?? attachment.fileName;
+  }
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoga depois que o navegador já abriu/baixou; imediato quebra o download.
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 function readFileAsBase64(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -368,26 +395,11 @@ export function VisitAttachmentsSection({ visit }: { visit: VisitDetail }) {
     upload.mutate(file);
   }
 
-  /** PDF abre em nova aba; imagem baixa com o nome original (como o DocumentCard). */
   async function open(attachmentId: string, fileName: string, mimeType: string) {
     if (downloading) return;
     setDownloading(attachmentId);
     try {
-      const { blob, fileName: served } = await visitsApi.downloadAttachment(visit.id, attachmentId);
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      if (mimeType === 'application/pdf') {
-        anchor.target = '_blank';
-        anchor.rel = 'noreferrer';
-      } else {
-        anchor.download = served ?? fileName;
-      }
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      // Revoga depois que o navegador já abriu/baixou; imediato quebra o download.
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      await openVisitAttachment(visit.id, { id: attachmentId, fileName, mimeType });
     } catch {
       toast('Não foi possível baixar o anexo.', { tone: 'attention' });
     } finally {

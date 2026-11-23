@@ -1834,6 +1834,11 @@ CRMLAB-87) vem antes no mesmo grupo. Arquivo `pages/Visitation/Doctors.tsx`.
     **Secretária** (Nome, Aniversário, Telefone/WhatsApp, Anotações). O modal rola por dentro.
     Validação local espelha a do servidor (aniversário, particulares ≤ total, faixa com dia e
     início < fim); `VALIDATION_ERROR` com `fields` marca o campo.
+  - **CRMLAB-195 — erro nunca fica escondido:** como o modal rola por dentro, o campo marcado
+    pode estar fora da vista. Sempre que a validação barra o envio (local ou `VALIDATION_ERROR`
+    com `fields`), o modal **rola até o primeiro campo com erro** (ordem da tela), põe o foco nele
+    (se não estiver desabilitado) e mostra o toast `attention` "Corrija: {rótulos dos campos}"
+    (ex.: "Corrija: Nome, Responsável pela carteira"). Vale para Cadastrar e Salvar.
 
 ---
 

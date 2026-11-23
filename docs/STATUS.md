@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-23 (CRMLAB-184: tela Digitalizações `/scans` no trilho, abaixo de Contatos)
+**Última atualização:** 2026-11-23 (CRMLAB-195: modal de médico avisa e leva até o campo com erro)
 
 ---
 
@@ -4249,6 +4249,15 @@ própria (PAGES.md §24a), item solto logo abaixo de **Contatos**, para todos os
 miniaturas, lightbox (zoom, baixar, anterior/próxima) e descartar. Sem mudança de backend (`GET/DELETE /scans`
 já existiam, §15.3). Arquivos: `frontend/src/pages/Scans.tsx` (+ spec), `route-config.ts` (ícone `scans`),
 `NavGlyph.tsx` (Camera), `routes/index.tsx`.
+
+### 🔄 CRMLAB-195 — Modal de médico: envio barrado sem aviso (2026-11-23, aguardando validação)
+
+Branch `feature/CRMLAB-195-aviso-validacao-medico`. Origem: Fátima (representante, Santé, prod v1.52.0)
+clicava em Cadastrar e "nada acontecia". Nenhum `POST /doctors` chegou ao servidor: a validação local
+barrava e marcava o campo lá em cima, fora da vista do modal que rola por dentro. Agora, quando a validação
+barra (local, `VALIDATION_ERROR` com `fields` ou CRM duplicado), o modal mostra o toast "Corrija: {campos}",
+rola até o primeiro campo com erro e põe o foco nele (PAGES.md §22). Sem mudança de regra nem de backend.
+Arquivos: `frontend/src/pages/Visitation/DoctorModal.tsx`; testes `Doctors.spec.tsx` (+2).
 
 ### ✅ CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-21, validado em hml)
 

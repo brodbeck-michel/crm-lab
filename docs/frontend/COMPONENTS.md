@@ -781,7 +781,8 @@ Adições sobre a anatomia já documentada acima — nenhuma variante nova:
   foco de teclado.
 - **Toast** — `<ToastProvider>` + `useToast()` → `{ toast, dismiss }`.
   `toast(msg, { tone: 'positive'|'attention'|'neutral', durationMs })`;
-  `durationMs: 0` mantém até o usuário fechar.
+  `durationMs: 0` mantém até o usuário fechar. `action: { label, onClick }` (CRMLAB-191, D-331)
+  desenha um botão no toast que executa `onClick` e fecha o toast (ex.: [Desfazer]).
 - **Modal** — além de ×/Esc/clique-fora: **trap de foco** (Tab circula dentro do
   cartão) e devolução do foco ao elemento anterior ao fechar. `footer` opcional.
 - **DataTable** — `columns` (`key`, `header`, `render`, `align`, `minWidth`),

@@ -7,6 +7,7 @@ import {
   VISIT_TYPES,
   VISIT_TYPE_LABELS,
   type ListVisitsQuery,
+  type ListVisitsResponse,
   type Visit,
   type VisitDetail,
   type VisitPurpose,
@@ -27,9 +28,14 @@ import { Button, Input, Select, TextArea, cn, useToast } from '@/components/ui';
 import {
   WEEK_DAYS,
   addDays,
+  addMonths,
   formatDateTime,
+  formatShortDayTime,
   fromDateTimeInputs,
+  monthGridDays,
+  monthLabel,
   sameDay,
+  startOfMonth,
   startOfWeek,
   toDateInput,
   toTimeInput,
@@ -51,6 +57,8 @@ import {
   useNow,
 } from './agenda-ui';
 import { AgendaWeek } from './AgendaWeek';
+import { AgendaMonth } from './AgendaMonth';
+import { canDragVisit } from './agenda-drag';
 import { AgendaList } from './AgendaList';
 import { AgendaRail, countByStatus, type RailAction } from './AgendaRail';
 import { AgendaMobile } from './AgendaMobile';
@@ -62,10 +70,11 @@ import {
   type ReturnVisitPrefill,
 } from './VisitRecord';
 
-type View = 'week' | 'list';
+type View = 'week' | 'month' | 'list';
 
 const VIEW_OPTIONS: Array<{ value: View; label: string }> = [
   { value: 'week', label: 'Semana' },
+  { value: 'month', label: 'Mês' },
   { value: 'list', label: 'Lista' },
 ];
 
@@ -143,6 +152,15 @@ function weekRange(weekStart: Date): ListVisitsQuery {
   return { from: weekStart.toISOString(), to: addDays(weekStart, WEEK_DAYS).toISOString() };
 }
 
+/** Grade do mês inteira (semanas de borda incluídas): ≤ 42 dias, cabe nos 62 do `GET /visits`. */
+function monthRange(days: Date[]): ListVisitsQuery {
+  const first = days[0] ?? new Date();
+  return { from: first.toISOString(), to: addDays(first, days.length).toISOString() };
+}
+
+const CLOSED_FOR_RESCHEDULE =
+  'Esta visita não pode mais ser reagendada (já tem check-in ou foi encerrada).';
+
 /**
  * Agenda de visitas — `/visitation/agenda` (PAGES.md §23 · API_CONTRACTS.md
  * §14 · CRMLAB-87, D-256 · repaginada no CRMLAB-92, D-262). Desktop: grade
@@ -156,6 +174,7 @@ export default function Agenda() {
   const now = useNow();
   const [view, setView] = useState<View>('week');
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState(() => new Date());
   const [filters, setFilters] = useState<Filters>(NO_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -198,15 +217,48 @@ export default function Agenda() {
     setSelectedDay(sameDay(startOfWeek(now), start) ? now : start);
   }
 
-  const range = useMemo(() => weekRange(weekStart), [weekStart]);
+  /** Visão Mês (CRMLAB-191, D-331): anda de mês em mês. */
+  function goToMonth(start: Date) {
+    setMonthStart(start);
+    setSelectedId(null);
+    setFollowLinked(false);
+    setSelectedDay(sameDay(startOfMonth(now), start) ? now : start);
+  }
+
+  /** Trocar de visão leva o período junto: o mês do dia em foco, ou a semana dele. */
+  function changeView(next: View) {
+    if (next === view) return;
+    if (next === 'month') goToMonth(startOfMonth(selectedDay));
+    else if (view === 'month') {
+      const focus = sameDay(startOfMonth(now), monthStart) ? now : monthStart;
+      goToWeek(startOfWeek(focus));
+    }
+    setView(next);
+  }
+
+  /** "+N" e número do dia na Mês: a Semana daquele dia (D-331 item 3). */
+  function showDay(day: Date) {
+    goToWeek(startOfWeek(day));
+    setSelectedDay(day);
+    setView('week');
+  }
+
+  const isMonth = view === 'month';
+  const monthDays = useMemo(() => monthGridDays(monthStart), [monthStart]);
+  const range = useMemo(
+    () => (isMonth ? monthRange(monthDays) : weekRange(weekStart)),
+    [isMonth, monthDays, weekStart],
+  );
   const visitsQuery = useQuery({
     queryKey: queryKeys.visits(range),
     queryFn: () => visitsApi.list(range),
   });
-  const weekVisits = useMemo(() => visitsQuery.data?.visits ?? [], [visitsQuery.data]);
+  const periodVisits = useMemo(() => visitsQuery.data?.visits ?? [], [visitsQuery.data]);
 
-  // "Hoje" no painel: se a semana na tela não é a atual, busca o dia à parte.
-  const todayInWeek = sameDay(startOfWeek(now), weekStart);
+  // "Hoje" no painel: se o período na tela não inclui hoje, busca o dia à parte.
+  const todayInWeek = isMonth
+    ? monthDays.some((day) => sameDay(day, now))
+    : sameDay(startOfWeek(now), weekStart);
   const todayKey = toDateInput(now); // muda só na virada do dia
   const todayRange = useMemo<ListVisitsQuery>(() => {
     const start = new Date(`${todayKey}T00:00:00`);
@@ -232,23 +284,23 @@ export default function Agenda() {
   const purposesQuery = useVisitPurposes();
   const purposes = useMemo(() => purposesQuery.data?.purposes ?? [], [purposesQuery.data]);
 
-  const visible = useMemo(() => applyFilters(weekVisits, filters), [weekVisits, filters]);
+  const visible = useMemo(() => applyFilters(periodVisits, filters), [periodVisits, filters]);
   const todayVisits = useMemo(
     () =>
       applyFilters(
         todayInWeek
-          ? weekVisits.filter((visit) => sameDay(new Date(visit.scheduledAt), now))
+          ? periodVisits.filter((visit) => sameDay(new Date(visit.scheduledAt), now))
           : (todayQuery.data?.visits ?? []),
         filters,
       ),
-    [todayInWeek, weekVisits, todayQuery.data, filters, now],
+    [todayInWeek, periodVisits, todayQuery.data, filters, now],
   );
-  const counts = useMemo(() => countByStatus(weekVisits), [weekVisits]);
-  const chips = useMemo(() => purposeChips(purposes, weekVisits), [purposes, weekVisits]);
+  const counts = useMemo(() => countByStatus(periodVisits), [periodVisits]);
+  const chips = useMemo(() => purposeChips(purposes, periodVisits), [purposes, periodVisits]);
 
   // Visita selecionada: da semana, de "Hoje" ou (link de outra semana) buscada à parte.
   const listed = selectedId
-    ? (weekVisits.find((v) => v.id === selectedId) ??
+    ? (periodVisits.find((v) => v.id === selectedId) ??
       todayQuery.data?.visits.find((v) => v.id === selectedId) ??
       null)
     : null;
@@ -273,7 +325,7 @@ export default function Agenda() {
     if (isWide && !isMobile) {
       setSelectedId(visit.id);
       const start = startOfWeek(new Date(visit.scheduledAt));
-      if (!sameDay(start, weekStart)) {
+      if (!isMonth && !sameDay(start, weekStart)) {
         setWeekStart(start);
         setSelectedDay(new Date(visit.scheduledAt));
       }
@@ -282,10 +334,69 @@ export default function Agenda() {
     }
   }
 
-  const newVisit = () => setModal({ kind: 'new', at: defaultNewVisitTime(weekStart) });
+  // Arrastar para reagendar (CRMLAB-191, D-331): otimista, com Desfazer e reversão.
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const handleApiError = useApiErrorHandler();
+  const currentUser = useCurrentUser();
+  const dragUser = currentUser ? { id: currentUser.id, seesAll } : null;
+  const canDrag = (visit: Visit) => canDragVisit(visit, dragUser);
+
+  async function moveVisit(visit: Visit, at: Date, undo = false): Promise<void> {
+    const previousAt = visit.scheduledAt;
+    if (new Date(previousAt).getTime() === at.getTime()) return;
+    const key = queryKeys.visits(range);
+    const snapshot = queryClient.getQueryData<ListVisitsResponse>(key);
+    if (snapshot) {
+      queryClient.setQueryData<ListVisitsResponse>(key, {
+        ...snapshot,
+        visits: snapshot.visits.map((v) =>
+          v.id === visit.id ? { ...v, scheduledAt: at.toISOString() } : v,
+        ),
+      });
+    }
+    try {
+      const updated = await visitsApi.reschedule(visit.id, {
+        scheduledAt: at.toISOString(),
+        reason: null,
+      });
+      queryClient.setQueryData(queryKeys.visit(visit.id), updated);
+      invalidateVisits(queryClient);
+      if (undo) {
+        toast('Reagendamento desfeito', { tone: 'positive' });
+        return;
+      }
+      toast(`Visita reagendada para ${formatShortDayTime(at)}`, {
+        tone: 'positive',
+        durationMs: 8000,
+        action: {
+          label: 'Desfazer',
+          onClick: () => void moveVisit(updated, new Date(previousAt), true),
+        },
+      });
+    } catch (error) {
+      if (snapshot) queryClient.setQueryData(key, snapshot);
+      invalidateVisits(queryClient);
+      if (
+        isApiError(error) &&
+        (error.code === 'VISIT_ALREADY_CHECKED_IN' || error.code === 'VISIT_ALREADY_CLOSED')
+      ) {
+        toast(CLOSED_FOR_RESCHEDULE, { tone: 'attention' });
+      } else {
+        handleApiError(error);
+      }
+    }
+  }
+  const onMoveVisit = (visit: Visit, at: Date) => void moveVisit(visit, at);
+
+  const newVisit = () =>
+    setModal({
+      kind: 'new',
+      at: isMonth ? defaultNewVisitTime(monthStart, startOfMonth) : defaultNewVisitTime(weekStart),
+    });
   const days = weekDays(weekStart);
   const emptyState: 'none' | 'week' | 'filtered' =
-    weekVisits.length === 0 ? 'week' : visible.length === 0 ? 'filtered' : 'none';
+    periodVisits.length === 0 ? 'week' : visible.length === 0 ? 'filtered' : 'none';
 
   const filterBar = (
     <FilterBar
@@ -350,7 +461,15 @@ export default function Agenda() {
           weekStart={weekStart}
           days={days}
           now={now}
-          selectedDay={days.some((day) => sameDay(day, selectedDay)) ? selectedDay : weekStart}
+          selectedDay={
+            isMonth
+              ? monthDays.some((day) => sameDay(day, selectedDay))
+                ? selectedDay
+                : monthStart
+              : days.some((day) => sameDay(day, selectedDay))
+                ? selectedDay
+                : weekStart
+          }
           visits={visible}
           activeFilters={activeFilterCount(filters)}
           onSelectDay={setSelectedDay}
@@ -359,6 +478,12 @@ export default function Agenda() {
           onOpenFilters={() => setFiltersOpen(true)}
           onNew={newVisit}
           onOpen={(visit) => setModal({ kind: 'visit', id: visit.id })}
+          view={isMonth ? 'month' : 'week'}
+          onChangeView={changeView}
+          monthStart={monthStart}
+          monthDays={monthDays}
+          onPrevMonth={() => goToMonth(addMonths(monthStart, -1))}
+          onNextMonth={() => goToMonth(addMonths(monthStart, 1))}
         />
         {modals}
       </>
@@ -382,26 +507,37 @@ export default function Agenda() {
 
         <div className="flex flex-wrap items-center justify-between gap-md">
           <div className="flex flex-wrap items-center gap-md">
-            <PeriodNav
-              onPrev={() => goToWeek(addDays(weekStart, -WEEK_DAYS))}
-              onToday={() => goToWeek(startOfWeek(new Date()))}
-              onNext={() => goToWeek(addDays(weekStart, WEEK_DAYS))}
-            />
+            {isMonth ? (
+              <PeriodNav
+                unit="month"
+                onPrev={() => goToMonth(addMonths(monthStart, -1))}
+                onToday={() => goToMonth(startOfMonth(new Date()))}
+                onNext={() => goToMonth(addMonths(monthStart, 1))}
+              />
+            ) : (
+              <PeriodNav
+                unit="week"
+                onPrev={() => goToWeek(addDays(weekStart, -WEEK_DAYS))}
+                onToday={() => goToWeek(startOfWeek(new Date()))}
+                onNext={() => goToWeek(addDays(weekStart, WEEK_DAYS))}
+              />
+            )}
             <span
-              className="text-[18px] font-semibold tabular-nums text-agenda-ink"
+              className="text-[18px] font-semibold tabular-nums text-agenda-ink first-letter:uppercase"
               data-testid="week-label"
             >
-              {weekLabel(weekStart)}
+              {isMonth ? monthLabel(monthStart) : weekLabel(weekStart)}
             </span>
           </div>
-          <ViewSwitch value={view} onChange={setView} />
+          <ViewSwitch value={view} onChange={changeView} />
         </div>
 
         {filterBar}
 
         {visitsQuery.data?.truncated && (
           <p className="text-caption text-agenda-muted">
-            A semana tem visitas demais para mostrar todas. Use os filtros para refinar.
+            {isMonth ? 'O mês' : 'A semana'} tem visitas demais para mostrar todas. Use os filtros
+            para refinar.
           </p>
         )}
 
@@ -422,6 +558,23 @@ export default function Agenda() {
             onOpen={openVisit}
             onSlot={(at) => setModal({ kind: 'new', at })}
             onClearFilters={() => setFilters(NO_FILTERS)}
+            canDrag={canDrag}
+            onMoveVisit={onMoveVisit}
+          />
+        ) : view === 'month' ? (
+          <AgendaMonth
+            monthStart={monthStart}
+            days={monthDays}
+            now={now}
+            visits={visible}
+            selectedId={selectedId}
+            emptyState={emptyState}
+            onOpen={openVisit}
+            onSlot={(at) => setModal({ kind: 'new', at })}
+            onShowDay={showDay}
+            onClearFilters={() => setFilters(NO_FILTERS)}
+            canDrag={canDrag}
+            onMoveVisit={onMoveVisit}
           />
         ) : visible.length === 0 ? (
           <EmptyCard state={emptyState} onClearFilters={() => setFilters(NO_FILTERS)} />
@@ -438,7 +591,8 @@ export default function Agenda() {
 
       {isWide && (
         <AgendaRail
-          weekVisits={weekVisits}
+          weekVisits={periodVisits}
+          summaryTitle={isMonth ? 'Resumo do mês' : 'Resumo da semana'}
           todayVisits={todayVisits}
           today={now}
           selected={selected}
@@ -454,18 +608,26 @@ export default function Agenda() {
   );
 }
 
-/** "+ Nova visita" sem clicar na grade: hoje (se a semana é a atual) ou a segunda, às 9h. */
-function defaultNewVisitTime(weekStart: Date): Date {
+/**
+ * "+ Nova visita" sem clicar na grade: hoje (se o período é o atual) ou o 1º dia
+ * dele (a segunda; na Mês, o dia 1), às 9h.
+ */
+function defaultNewVisitTime(
+  periodStart: Date,
+  startOf: (date: Date) => Date = startOfWeek,
+): Date {
   const now = new Date();
-  const base = sameDay(startOfWeek(now), weekStart) ? now : weekStart;
+  const base = sameDay(startOf(now), periodStart) ? now : periodStart;
   return new Date(base.getFullYear(), base.getMonth(), base.getDate(), 9, 0);
 }
 
 function PeriodNav({
+  unit,
   onPrev,
   onToday,
   onNext,
 }: {
+  unit: 'week' | 'month';
   onPrev: () => void;
   onToday: () => void;
   onNext: () => void;
@@ -480,7 +642,7 @@ function PeriodNav({
     >
       <button
         type="button"
-        aria-label="Semana anterior"
+        aria-label={unit === 'month' ? 'Mês anterior' : 'Semana anterior'}
         onClick={onPrev}
         className={cn(item, 'px-md py-sm text-[16px]')}
       >
@@ -498,7 +660,7 @@ function PeriodNav({
       </button>
       <button
         type="button"
-        aria-label="Próxima semana"
+        aria-label={unit === 'month' ? 'Próximo mês' : 'Próxima semana'}
         onClick={onNext}
         className={cn(item, 'px-md py-sm text-[16px]')}
       >

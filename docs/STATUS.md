@@ -4355,3 +4355,19 @@ BUSINESS_RULES §12–§15, SECURITY "Autorização", PAGES §22–§23 e §22c.
   `GET /doctors/lookup` (D-329 item 12): todo papel, sem carteira, só ativos, shape mínimo. Testes
   `tests/doctors/doctor-lookup.spec.ts` + inventário (142 rotas). O corte A/B/C nas Carteiras ainda não
   foi ligado (o `abc` segue opcional no shape) — fica para um card próprio.
+
+### 🔄 CRMLAB-191 — Agenda: visão Mês e arrastar para reagendar (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-191-agenda-mes-arrastar` (épico Visitação v2, CRMLAB-187). Contrato: D-331,
+PAGES §23 (Mês, arrastar, celular), COMPONENTS "Toast" (`action`). API_CONTRACTS e SCHEMA sem mudança —
+o arrastar usa o `POST /visits/:id/reschedule` existente; nenhuma migração.
+- **ui:** seletor Semana | Mês | Lista; `AgendaMonth.tsx` (grade seg–dom com semanas de borda numa só
+  consulta ≤ 42 dias, até 3 cartões por dia, "+N" leva à Semana do dia, navegação por mês, "Resumo do
+  mês" na coluna); arrastar e soltar HTML5 nativo (`agenda-drag.ts`, mesmo mecanismo do funil, sem
+  dependência nova) na Mês (mantém a hora) e na Semana (encaixe de 30 min pelo topo do cartão);
+  só agendada sem check-in, e o representante só a dele; otimista com reversão em 409/erro de rede;
+  toast com [Desfazer] (reagenda de volta). Celular: Semana | Mês, mês em grade com ponto por dia e
+  lista do dia ao tocar, sem arrastar. `Toast` ganhou `action`.
+- **testes:** `AgendaMonthDrag.spec.tsx` (13: grade, +N, navegação, filtros, arrastar na Mês e na
+  Semana com encaixe, bloqueio por status/check-in/representante, 409 e rede revertem, desfazer,
+  celular) + `Toast.spec` (ação).

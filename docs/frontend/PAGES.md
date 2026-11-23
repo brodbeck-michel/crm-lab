@@ -1916,8 +1916,9 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   Fechar limpa o parâmetro.
 - **Topo:** `PageHeader` compacto "Agenda de visitas" + [+ Nova visita] (hoje às 9h se a semana é
   a atual; senão a segunda às 9h).
-- **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana") +
-  período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026"); à direita, o seletor Semana | Lista.
+- **Toolbar:** grupo unido [‹] [Hoje] [›] (`aria-label` "Semana anterior"/"Próxima semana"; na
+  Mês, "Mês anterior"/"Próximo mês") + período ("05 – 11 de out. 2026" / "28 set. – 04 out. 2026";
+  na Mês, "outubro de 2026"); à direita, o seletor **Semana | Mês | Lista** (Mês: CRMLAB-191, D-331).
 - **Filtros:** chips de status (são filtro e legenda: ponto + rótulo + contagem da semana inteira;
   todos ligados; clicar desliga), chips de **finalidade** (CRMLAB-190, D-330: mesma mecânica —
   ponto na cor da finalidade + nome + contagem da semana; multisseleção, todos ligados, clicar
@@ -1935,6 +1936,24 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   clicada; o "+" escondido de cada hora faz o mesmo pelo teclado. Semana vazia: cartão "Nenhuma
   visita nesta semana" sobre a grade (com filtros: "Nenhuma visita com esses filtros" + [Limpar
   filtros]). Carregando: esqueleto.
+- **Mês (CRMLAB-191, D-331):** grade seg–dom com as semanas que tocam o mês (4–6 linhas; dias de
+  fora do mês esmaecidos, com as visitas deles). Um `GET /visits` cobre da segunda da 1ª semana à
+  segunda depois da última (≤ 42 dias). Cada dia: número (hoje no círculo da cor do tema; clicar
+  leva à Semana do dia) e até **3 cartões** na cor da finalidade — ícone de status + "HH:MM Médico"
+  + avatar do responsável (finalidade e status no `aria-label`/`title`; cancelada/não recebeu
+  riscado e com opacidade). Com 4+, mostra 2 e **"+N"**, que leva para a **Semana** daquele dia.
+  Clicar no cartão abre a visita (coluna de resumo ou `Modal`); clicar no vazio do dia abre "Nova
+  visita" naquele dia às 09:00. Filtros e chips valem sobre o mês carregado; a coluna de resumo
+  diz "Resumo do mês". Mês vazio: cartão "Nenhuma visita neste mês" (com filtros, o de sempre).
+- **Arrastar para reagendar (desktop, CRMLAB-191, D-331):** HTML5 drag-and-drop nativo. Só fica
+  arrastável (`draggable`, cursor de mão) a visita **agendada sem check-in**; o representante, só as
+  em que é o responsável. Na **Mês**, soltar em outro dia mantém a hora; na **Semana**, soltar troca
+  dia e hora com **encaixe de 30 min** (topo do cartão, meia hora mais próxima, 07:00–20:30). A
+  coluna/dia sob o cartão fica destacada. Soltar no mesmo lugar não faz nada. O cartão muda na hora
+  e chama `POST /visits/:id/reschedule` com `reason: null`; sucesso → toast "Visita reagendada para
+  Qui, 08/10 às 14:00" com **[Desfazer]** (8 s, reagenda de volta). 409 → toast "Esta visita não
+  pode mais ser reagendada (já tem check-in ou foi encerrada)." e o cartão volta; erro de rede
+  volta o cartão e mostra o erro padrão. Teclado: o [Reagendar] continua sendo o caminho.
 - **Lista:** a mesma semana; cabeçalho do dia fixo ("Quinta, 01 de out." + contagem); linha em
   colunas Horário · Médico (+ finalidade, com o ponto na cor dela) · Local (clínica do médico ou,
   sem ela, o tipo da visita) · Responsável (avatar + nome) · selo do status. A linha tem uma
@@ -1955,7 +1974,9 @@ Tela **full-bleed** (sem `PageContainer`): conteúdo à esquerda e, a partir de 
   visita; hoje tingido; o selecionado na cor do tema); título do dia + contagem; lista do dia em
   cartões **na cor da finalidade** (ícone + rótulo do status no topo, nome do médico, finalidade,
   especialidade · local, responsável; cancelada/não recebeu riscado e com opacidade). Tocar abre
-  o `Modal` "Visita".
+  o `Modal` "Visita". Seletor **Semana | Mês** abaixo do cabeçalho (CRMLAB-191, D-331): na Mês, a
+  faixa vira o mês em grade (‹ › "Mês anterior"/"Próximo mês", um **ponto** por dia com visita,
+  dias de fora do mês esmaecidos) e tocar no dia mostra a lista daquele dia embaixo. Sem arrastar.
 - **Nova/Editar visita** (`Modal`): Médico*, Responsável* (abre com o usuário logado),
   **Finalidade*** (CRMLAB-190: só as ativas; a atual inativa aparece como "Nome (inativa)"; abre
   vazia ao criar, e o "Agendar retorno" traz a da visita anterior se ainda ativa), Tipo (modo),

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Visit } from '@crm-lab/shared';
 import { VISIT_STATUS_LABELS } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
@@ -20,6 +21,7 @@ import {
   isStruck,
   placeVisits,
 } from './agenda-ui';
+import { isVisitDrag, readVisitDrag, snapToHalfHour, startVisitDrag } from './agenda-drag';
 
 const HOURS = Array.from({ length: GRID_ROWS }, (_, i) => FIRST_HOUR + i);
 const COLUMNS = 'grid-cols-[56px_repeat(7,minmax(0,1fr))]';
@@ -35,13 +37,17 @@ interface AgendaWeekProps {
   onOpen: (visit: Visit) => void;
   onSlot: (at: Date) => void;
   onClearFilters: () => void;
+  /** Arrastar (CRMLAB-191, D-331): quem pode ser pego e o que fazer ao soltar. */
+  canDrag: (visit: Visit) => boolean;
+  onMoveVisit: (visit: Visit, at: Date) => void;
 }
 
 /**
  * Grade semanal (CRMLAB-92, D-262): eixo 07–20h, 1 h = 64px, blocos com
  * posição absoluta pela hora de início e altura fixa de 1 h (a visita não tem
  * duração prevista). Clicar no vazio agenda naquela hora/meia hora; o "+" de
- * cada hora faz o mesmo pelo teclado.
+ * cada hora faz o mesmo pelo teclado. Arrastar um bloco para outro horário
+ * reagenda com encaixe de 30 min (CRMLAB-191, D-331).
  */
 export function AgendaWeek({
   days,
@@ -52,7 +58,14 @@ export function AgendaWeek({
   onOpen,
   onSlot,
   onClearFilters,
+  canDrag,
+  onMoveVisit,
 }: AgendaWeekProps) {
+  function dropAt(id: string, at: Date) {
+    const visit = visits.find((v) => v.id === id);
+    if (visit && canDrag(visit)) onMoveVisit(visit, at);
+  }
+
   return (
     <div
       className="relative flex min-h-0 flex-1 flex-col overflow-auto rounded-lg border border-agenda-line bg-bg"
@@ -101,6 +114,8 @@ export function AgendaWeek({
               selectedId={selectedId}
               onOpen={onOpen}
               onSlot={onSlot}
+              canDrag={canDrag}
+              onDropAt={dropAt}
             />
           ))}
         </div>
@@ -181,9 +196,21 @@ interface DayColumnProps {
   selectedId: string | null;
   onOpen: (visit: Visit) => void;
   onSlot: (at: Date) => void;
+  canDrag: (visit: Visit) => boolean;
+  onDropAt: (id: string, at: Date) => void;
 }
 
-function DayColumn({ day, now, visits, selectedId, onOpen, onSlot }: DayColumnProps) {
+function DayColumn({
+  day,
+  now,
+  visits,
+  selectedId,
+  onOpen,
+  onSlot,
+  canDrag,
+  onDropAt,
+}: DayColumnProps) {
+  const [over, setOver] = useState(false);
   const today = sameDay(day, now);
   const weekend = day.getDay() === 0 || day.getDay() === 6;
   const nowTop = ((minutesOfDay(now) - FIRST_HOUR * 60) / 60) * HOUR_PX;
@@ -206,6 +233,7 @@ function DayColumn({ day, now, visits, selectedId, onOpen, onSlot }: DayColumnPr
       className={cn(
         'group/day relative cursor-pointer border-l border-agenda-line-soft',
         today ? 'bg-agenda-brand-col' : weekend ? 'bg-agenda-weekend' : 'bg-bg',
+        over && 'bg-agenda-brand-tint',
       )}
       style={{
         backgroundImage:
@@ -216,7 +244,27 @@ function DayColumn({ day, now, visits, selectedId, onOpen, onSlot }: DayColumnPr
         const rect = event.currentTarget.getBoundingClientRect();
         onSlot(slotAt(event.clientY - rect.top));
       }}
+      onDragOver={(event) => {
+        if (!isVisitDrag(event)) return;
+        // Sem o preventDefault o navegador recusa o drop (HTML5 drag-and-drop).
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        if (!over) setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(event) => {
+        setOver(false);
+        const payload = readVisitDrag(event);
+        if (!payload) return;
+        event.preventDefault();
+        const rect = event.currentTarget.getBoundingClientRect();
+        onDropAt(
+          payload.id,
+          snapToHalfHour(day, event.clientY - rect.top - payload.grabOffsetY, HOUR_PX),
+        );
+      }}
       data-testid="agenda-day"
+      data-day={day.toISOString()}
     >
       {HOURS.map((hour, index) => (
         <button
@@ -241,6 +289,7 @@ function DayColumn({ day, now, visits, selectedId, onOpen, onSlot }: DayColumnPr
           top={top}
           lane={lane}
           selected={visit.id === selectedId}
+          draggable={canDrag(visit)}
           onOpen={onOpen}
         />
       ))}
@@ -264,6 +313,7 @@ interface VisitBlockProps {
   top: number;
   lane: number;
   selected: boolean;
+  draggable: boolean;
   onOpen: (visit: Visit) => void;
 }
 
@@ -272,7 +322,7 @@ interface VisitBlockProps {
  * ícone (com texto para leitor de tela) e, em cancelada/não recebeu, nome
  * riscado + opacidade. Linha 1 "HH:MM Médico", linha 2 a finalidade.
  */
-function VisitBlock({ visit, top, lane, selected, onOpen }: VisitBlockProps) {
+function VisitBlock({ visit, top, lane, selected, draggable, onOpen }: VisitBlockProps) {
   const style = PURPOSE_STYLES[visit.purpose.color];
   const struck = isStruck(visit.status);
   const inset = lane * 28;
@@ -285,12 +335,15 @@ function VisitBlock({ visit, top, lane, selected, onOpen }: VisitBlockProps) {
       }}
       aria-label={`${formatTime(visit.scheduledAt)} ${visit.doctor.name} — ${VISIT_STATUS_LABELS[visit.status]} · ${visit.purpose.name}`}
       aria-pressed={selected}
+      draggable={draggable}
+      onDragStart={draggable ? (event) => startVisitDrag(event, visit) : undefined}
       title={`${visit.purpose.name} · ${VISIT_STATUS_LABELS[visit.status]}`}
       className={cn(
         'absolute z-[1] flex flex-col gap-[2px] overflow-hidden rounded-md px-[7px] py-xs text-left transition-[filter]',
         'hover:brightness-[.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
         style.bg,
         style.ink,
+        draggable && 'cursor-grab active:cursor-grabbing',
         struck && 'opacity-60',
         lane > 0 && 'shadow-[0_0_0_1.5px_var(--color-bg),0_2px_6px_rgba(0,0,0,.12)]',
         selected && 'shadow-[0_0_0_2px_var(--color-agenda-ink)]',

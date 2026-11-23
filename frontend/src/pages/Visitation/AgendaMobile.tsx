@@ -1,6 +1,13 @@
 import { VISIT_STATUS_LABELS, VISIT_TYPE_LABELS, type Visit } from '@crm-lab/shared';
 import { cn } from '@/components/ui';
-import { formatDayLabel, formatTime, formatWeekday, sameDay, weekMonths } from './agenda-dates';
+import {
+  formatDayLabel,
+  formatTime,
+  formatWeekday,
+  monthLabel,
+  sameDay,
+  weekMonths,
+} from './agenda-dates';
 import { PURPOSE_STYLES, PersonAvatar, StatusIcon, isStruck, visitPlace } from './agenda-ui';
 
 interface AgendaMobileProps {
@@ -17,13 +24,22 @@ interface AgendaMobileProps {
   onOpenFilters: () => void;
   onNew: () => void;
   onOpen: (visit: Visit) => void;
+  /** Semana (faixa de 7 dias) ou Mês (grade com ponto por dia) — CRMLAB-191, D-331. */
+  view: 'week' | 'month';
+  onChangeView: (view: 'week' | 'month') => void;
+  monthStart: Date;
+  /** Grade seg–dom do mês (`monthGridDays`). */
+  monthDays: Date[];
+  onPrevMonth: () => void;
+  onNextMonth: () => void;
 }
 
 /**
  * Celular (< 768px, CRMLAB-92, D-262): foco no DIA. Faixa da semana com
  * ponto nos dias que têm visita, título do dia e a lista daquele dia. Tocar
  * abre a visita completa (modal em tela cheia). Cartão na cor da finalidade,
- * status por ícone + rótulo (CRMLAB-190, D-330).
+ * status por ícone + rótulo (CRMLAB-190, D-330). Na visão Mês (CRMLAB-191,
+ * D-331) a faixa vira o mês em grade, com ponto nos dias com visita; sem arrastar.
  */
 export function AgendaMobile(props: AgendaMobileProps) {
   const { weekStart, days, now, selectedDay, visits, activeFilters } = props;
@@ -33,7 +49,9 @@ export function AgendaMobile(props: AgendaMobileProps) {
     <div className="flex flex-col bg-bg" data-testid="agenda-mobile">
       <header className="flex items-end justify-between gap-md border-b border-agenda-line px-[20px] pb-md pt-[18px]">
         <div>
-          <p className="text-caption text-agenda-muted">{weekMonths(weekStart)}</p>
+          <p className="text-caption text-agenda-muted">
+            {props.view === 'month' ? monthLabel(props.monthStart) : weekMonths(weekStart)}
+          </p>
           <h1 className="text-[22px] font-bold leading-tight text-agenda-ink">Agenda</h1>
         </div>
         <div className="flex items-center gap-sm">
@@ -71,61 +89,96 @@ export function AgendaMobile(props: AgendaMobileProps) {
         </div>
       </header>
 
-      <div className="flex items-center gap-xs px-sm pt-md">
-        <button
-          type="button"
-          aria-label="Semana anterior"
-          onClick={props.onPrevWeek}
-          className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
-        >
-          ‹
-        </button>
-        <div className="grid flex-1 grid-cols-7 gap-xs" role="tablist" aria-label="Dias da semana">
-          {days.map((day) => {
-            const selected = sameDay(day, selectedDay);
-            const today = sameDay(day, now);
-            const has = visits.some((visit) => sameDay(new Date(visit.scheduledAt), day));
-            return (
-              <button
-                key={day.toISOString()}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-label={`${formatDayLabel(day)}${has ? ', com visitas' : ''}`}
-                onClick={() => props.onSelectDay(day)}
-                className={cn(
-                  'flex min-h-[60px] flex-col items-center justify-center gap-[2px] rounded-lg',
-                  selected
-                    ? 'bg-accent text-bg'
-                    : today
-                      ? 'bg-agenda-brand-tint text-accent'
-                      : 'text-agenda-ink',
-                )}
-              >
-                <span className="text-[10px] font-bold uppercase">{formatWeekday(day)}</span>
-                <span className="text-[17px] font-bold tabular-nums leading-none">
-                  {String(day.getDate()).padStart(2, '0')}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    'h-[5px] w-[5px] rounded-pill',
-                    has ? (selected ? 'bg-bg' : 'bg-accent') : 'bg-transparent',
-                  )}
-                />
-              </button>
-            );
-          })}
-        </div>
-        <button
-          type="button"
-          aria-label="Próxima semana"
-          onClick={props.onNextWeek}
-          className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
-        >
-          ›
-        </button>
+      <div
+        role="tablist"
+        aria-label="Visão da agenda"
+        className="mx-[20px] mt-md inline-flex gap-[2px] self-start rounded-md bg-agenda-seg p-[3px]"
+      >
+        {(
+          [
+            { value: 'week', label: 'Semana' },
+            { value: 'month', label: 'Mês' },
+          ] as const
+        ).map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            role="tab"
+            aria-selected={props.view === option.value}
+            onClick={() => props.onChangeView(option.value)}
+            className={cn(
+              'min-h-[36px] rounded-sm px-[14px] text-body font-semibold',
+              props.view === option.value ? 'bg-bg text-agenda-ink' : 'text-agenda-muted',
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
+
+      {props.view === 'month' ? (
+        <MonthGrid {...props} />
+      ) : (
+        <div className="flex items-center gap-xs px-sm pt-md">
+          <button
+            type="button"
+            aria-label="Semana anterior"
+            onClick={props.onPrevWeek}
+            className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
+          >
+            ‹
+          </button>
+          <div
+            className="grid flex-1 grid-cols-7 gap-xs"
+            role="tablist"
+            aria-label="Dias da semana"
+          >
+            {days.map((day) => {
+              const selected = sameDay(day, selectedDay);
+              const today = sameDay(day, now);
+              const has = visits.some((visit) => sameDay(new Date(visit.scheduledAt), day));
+              return (
+                <button
+                  key={day.toISOString()}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  aria-label={`${formatDayLabel(day)}${has ? ', com visitas' : ''}`}
+                  onClick={() => props.onSelectDay(day)}
+                  className={cn(
+                    'flex min-h-[60px] flex-col items-center justify-center gap-[2px] rounded-lg',
+                    selected
+                      ? 'bg-accent text-bg'
+                      : today
+                        ? 'bg-agenda-brand-tint text-accent'
+                        : 'text-agenda-ink',
+                  )}
+                >
+                  <span className="text-[10px] font-bold uppercase">{formatWeekday(day)}</span>
+                  <span className="text-[17px] font-bold tabular-nums leading-none">
+                    {String(day.getDate()).padStart(2, '0')}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'h-[5px] w-[5px] rounded-pill',
+                      has ? (selected ? 'bg-bg' : 'bg-accent') : 'bg-transparent',
+                    )}
+                  />
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            aria-label="Próxima semana"
+            onClick={props.onNextWeek}
+            className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
+          >
+            ›
+          </button>
+        </div>
+      )}
 
       <div className="flex items-baseline gap-sm px-[20px] pb-sm pt-lg">
         <h2 className="text-[16px] font-bold text-agenda-ink">{formatDayLabel(selectedDay)}</h2>
@@ -198,6 +251,83 @@ export function AgendaMobile(props: AgendaMobileProps) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Mês em grade (celular): um ponto por dia com visita; tocar escolhe o dia. */
+function MonthGrid(props: AgendaMobileProps) {
+  const { monthStart, monthDays, now, selectedDay, visits } = props;
+  return (
+    <div className="flex items-start gap-xs px-sm pt-md" data-testid="agenda-mobile-month">
+      <button
+        type="button"
+        aria-label="Mês anterior"
+        onClick={props.onPrevMonth}
+        className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
+      >
+        ‹
+      </button>
+      <div className="flex-1">
+        <div aria-hidden="true" className="grid grid-cols-7 pb-xs">
+          {['S', 'T', 'Q', 'Q', 'S', 'S', 'D'].map((letter, index) => (
+            <span
+              key={index}
+              className="text-center text-[10px] font-bold uppercase text-agenda-muted"
+            >
+              {letter}
+            </span>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-[2px]" role="group" aria-label="Dias do mês">
+          {monthDays.map((day) => {
+            const selected = sameDay(day, selectedDay);
+            const today = sameDay(day, now);
+            const inMonth = day.getMonth() === monthStart.getMonth();
+            const has = visits.some((visit) => sameDay(new Date(visit.scheduledAt), day));
+            return (
+              <button
+                key={day.toISOString()}
+                type="button"
+                aria-pressed={selected}
+                aria-label={`${formatDayLabel(day)}${has ? ', com visitas' : ''}`}
+                onClick={() => props.onSelectDay(day)}
+                data-testid="mobile-month-day"
+                className={cn(
+                  'flex min-h-[44px] flex-col items-center justify-center gap-[3px] rounded-md',
+                  selected
+                    ? 'bg-accent text-bg'
+                    : today
+                      ? 'bg-agenda-brand-tint text-accent'
+                      : inMonth
+                        ? 'text-agenda-ink'
+                        : 'text-agenda-muted-2',
+                )}
+              >
+                <span className="text-[14px] font-bold tabular-nums leading-none">
+                  {day.getDate()}
+                </span>
+                <span
+                  aria-hidden="true"
+                  data-testid={has ? 'mobile-month-dot' : undefined}
+                  className={cn(
+                    'h-[5px] w-[5px] rounded-pill',
+                    has ? (selected ? 'bg-bg' : 'bg-accent') : 'bg-transparent',
+                  )}
+                />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <button
+        type="button"
+        aria-label="Próximo mês"
+        onClick={props.onNextMonth}
+        className="h-11 w-6 shrink-0 text-[18px] text-agenda-ink-2"
+      >
+        ›
+      </button>
     </div>
   );
 }

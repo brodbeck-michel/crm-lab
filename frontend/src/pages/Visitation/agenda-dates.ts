@@ -144,3 +144,55 @@ export function formatHour(hour: number): string {
 export function minutesOfDay(date: Date): number {
   return date.getHours() * 60 + date.getMinutes();
 }
+
+/* ------------------------------------------------------------------ */
+/* Mês (CRMLAB-191, D-331)                                              */
+/* ------------------------------------------------------------------ */
+
+/** Dia 1 (00:00 local) do mês de `date`. */
+export function startOfMonth(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+export function addMonths(monthStart: Date, months: number): Date {
+  return new Date(monthStart.getFullYear(), monthStart.getMonth() + months, 1);
+}
+
+/**
+ * Dias da grade do mês, seg–dom: da segunda da semana do dia 1 ao domingo da
+ * semana do último dia (28 a 42 dias — cabe nos 62 do `GET /visits`).
+ */
+export function monthGridDays(monthStart: Date): Date[] {
+  const first = startOfWeek(monthStart);
+  const last = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0);
+  const end = addDays(startOfWeek(last), WEEK_DAYS);
+  const days: Date[] = [];
+  for (let day = first; day < end; day = addDays(day, 1)) days.push(day);
+  return days;
+}
+
+const monthYear = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' });
+
+/** "outubro de 2026". */
+export function monthLabel(monthStart: Date): string {
+  return monthYear.format(monthStart);
+}
+
+/** Mesma hora de `time`, no dia `day` (soltar na visão Mês mantém a hora). */
+export function withDay(time: Date, day: Date): Date {
+  return new Date(
+    day.getFullYear(),
+    day.getMonth(),
+    day.getDate(),
+    time.getHours(),
+    time.getMinutes(),
+    time.getSeconds(),
+    time.getMilliseconds(),
+  );
+}
+
+/** "Qui, 08/10 às 14:00" — toast do reagendamento por arrastar. */
+export function formatShortDayTime(date: Date): string {
+  const name = formatWeekday(date);
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)}, ${pad(date.getDate())}/${pad(date.getMonth() + 1)} às ${formatTime(date)}`;
+}

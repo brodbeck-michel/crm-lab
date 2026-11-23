@@ -28,6 +28,8 @@ export type RailAction = 'reschedule' | 'cancel' | 'not_received';
 interface AgendaRailProps {
   /** Semana inteira, sem filtro — o resumo ignora os filtros. */
   weekVisits: Visit[];
+  /** Título do resumo: "Resumo da semana" ou, na visão Mês, "Resumo do mês" (D-331). */
+  summaryTitle?: string;
   /** Visitas de hoje, já filtradas. */
   todayVisits: Visit[];
   today: Date;
@@ -44,14 +46,15 @@ interface AgendaRailProps {
  * embaixo, "Hoje" ou o detalhe da visita escolhida com as ações do estado.
  */
 export function AgendaRail(props: AgendaRailProps) {
-  const { weekVisits, todayVisits, today, selected, onSelect } = props;
+  const { weekVisits, summaryTitle = 'Resumo da semana', todayVisits, today, selected, onSelect } =
+    props;
   return (
     <aside
       aria-label="Resumo da agenda"
       className="flex w-[280px] shrink-0 flex-col gap-[20px] overflow-y-auto border-l border-agenda-line bg-agenda-rail px-[20px] py-xl"
       data-testid="agenda-rail"
     >
-      <WeekSummary visits={weekVisits} />
+      <WeekSummary visits={weekVisits} title={summaryTitle} />
       <div className="h-px shrink-0 bg-agenda-line" />
       {selected ? (
         <VisitDetailPanel key={selected.id} {...props} selected={selected} />
@@ -70,12 +73,12 @@ function Overline({ children }: { children: ReactNode }) {
   );
 }
 
-function WeekSummary({ visits }: { visits: Visit[] }) {
+function WeekSummary({ visits, title }: { visits: Visit[]; title: string }) {
   const counts = countByStatus(visits);
   const total = visits.length;
   return (
     <section className="flex flex-col gap-md" data-testid="week-summary">
-      <Overline>Resumo da semana</Overline>
+      <Overline>{title}</Overline>
       <p className="flex items-baseline gap-sm">
         <span className="text-[34px] font-bold leading-none tracking-[-0.02em] tabular-nums text-agenda-ink">
           {total}

@@ -12,6 +12,7 @@ import {
   VISITATION_RESPONSIBLE_ROLES,
   type Doctor,
   type DoctorAbcClass,
+  type DoctorPortfolioAbc,
   type DoctorSortBy,
   type DoctorVisitHours,
   type TenantRole,
@@ -235,15 +236,37 @@ const UNASSIGNED_SQL = `(d.responsible_user_id IS NULL OR u.id IS NULL OR u.is_a
   OR u.role NOT IN ${ELIGIBLE_ROLES_SQL})`;
 
 /** Linha da carteira, como sai do SQL. */
-export interface PortfolioRow {
+export interface PortfolioRow extends PortfolioCounts {
   responsible: { id: string; name: string; role: TenantRole };
-  doctorCount: number;
-  activeDoctorCount: number;
 }
 
 export interface PortfolioCounts {
   doctorCount: number;
   activeDoctorCount: number;
+  /** Corte ABC dos ATIVOS (D-333 item 7): soma `activeDoctorCount`. */
+  abc: DoctorPortfolioAbc;
+}
+
+/** Colunas do corte ABC dos medicos ativos (D-333 item 7). Exige `doctors d`. */
+const ABC_COUNT_COLUMNS = `COUNT(d.id) FILTER (WHERE d.is_active AND d.abc_class = 'A')::int AS abc_a,
+                COUNT(d.id) FILTER (WHERE d.is_active AND d.abc_class = 'B')::int AS abc_b,
+                COUNT(d.id) FILTER (WHERE d.is_active AND d.abc_class = 'C')::int AS abc_c,
+                COUNT(d.id) FILTER (WHERE d.is_active AND d.abc_class IS NULL)::int AS abc_none`;
+
+interface AbcCountRow {
+  abc_a: number | string;
+  abc_b: number | string;
+  abc_c: number | string;
+  abc_none: number | string;
+}
+
+function toPortfolioAbc(row: AbcCountRow | undefined): DoctorPortfolioAbc {
+  return {
+    A: Number(row?.abc_a ?? 0),
+    B: Number(row?.abc_b ?? 0),
+    C: Number(row?.abc_c ?? 0),
+    unclassified: Number(row?.abc_none ?? 0),
+  };
 }
 
 /** Resultado da transferencia: o que mudou, para o audit do service. */
@@ -445,16 +468,19 @@ export class DoctorRepository {
    */
   async portfolios(tenantId: string): Promise<{ rows: PortfolioRow[]; unassigned: PortfolioCounts }> {
     return this.db.withTenant(tenantId, async (tx) => {
-      const rows = await tx.query<{
-        id: string;
-        name: string;
-        role: TenantRole;
-        doctor_count: number | string;
-        active_doctor_count: number | string;
-      }>(
+      const rows = await tx.query<
+        AbcCountRow & {
+          id: string;
+          name: string;
+          role: TenantRole;
+          doctor_count: number | string;
+          active_doctor_count: number | string;
+        }
+      >(
         `SELECT u.id, u.name, u.role,
                 COUNT(d.id)::int AS doctor_count,
-                COUNT(d.id) FILTER (WHERE d.is_active)::int AS active_doctor_count
+                COUNT(d.id) FILTER (WHERE d.is_active)::int AS active_doctor_count,
+                ${ABC_COUNT_COLUMNS}
            FROM users u
            LEFT JOIN doctors d ON d.responsible_user_id = u.id
           WHERE u.tenant_id = $1
@@ -465,9 +491,12 @@ export class DoctorRepository {
           ORDER BY u.name ASC, u.id ASC`,
         [tenantId],
       );
-      const unassigned = await tx.query<{ doctor_count: number | string; active_doctor_count: number | string }>(
+      const unassigned = await tx.query<
+        AbcCountRow & { doctor_count: number | string; active_doctor_count: number | string }
+      >(
         `SELECT COUNT(*)::int AS doctor_count,
-                COUNT(*) FILTER (WHERE d.is_active)::int AS active_doctor_count
+                COUNT(*) FILTER (WHERE d.is_active)::int AS active_doctor_count,
+                ${ABC_COUNT_COLUMNS}
            ${FROM}
           WHERE ${UNASSIGNED_SQL}`,
       );
@@ -477,10 +506,12 @@ export class DoctorRepository {
           responsible: { id: row.id, name: row.name, role: row.role },
           doctorCount: Number(row.doctor_count),
           activeDoctorCount: Number(row.active_doctor_count),
+          abc: toPortfolioAbc(row),
         })),
         unassigned: {
           doctorCount: Number(counts?.doctor_count ?? 0),
           activeDoctorCount: Number(counts?.active_doctor_count ?? 0),
+          abc: toPortfolioAbc(counts),
         },
       };
     });

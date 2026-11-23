@@ -48,6 +48,7 @@ import { doctorModule } from '../../src/controllers/doctor.routes.js';
 import { examModule } from '../../src/controllers/exam.routes.js';
 import { visitModule } from '../../src/controllers/visit.routes.js';
 import { visitPurposeModule } from '../../src/controllers/visit-purpose.routes.js';
+import { visitationReportModule } from '../../src/controllers/visitation-report.routes.js';
 import { funnelRulesModule } from '../../src/controllers/funnel-rules.routes.js';
 import { insuranceModule } from '../../src/controllers/insurance.routes.js';
 import { internalChatModule } from '../../src/controllers/internal-chat.routes.js';
@@ -138,6 +139,7 @@ const LAB_MODULES = [
   doctorModule,
   visitModule,
   visitPurposeModule, // CRMLAB-190
+  visitationReportModule, // CRMLAB-193
   examModule,
   funnelRulesModule,
   insuranceModule,
@@ -804,6 +806,21 @@ const LAB_ROUTES: readonly LabRoute[] = [
     ownStatus: 200,
   },
 
+  // --- relatório de visitação (CRMLAB-193, D-333): representante/gestor/admin ---
+  {
+    name: 'GET /visitation-reports/summary',
+    method: 'get',
+    path: () => '/api/v1/visitation-reports/summary?from=2026-10-01&to=2026-10-31',
+    actor: 'manager',
+    addressable: false,
+  },
+  {
+    name: 'GET /visitation-reports/stale-doctors',
+    method: 'get',
+    path: () => '/api/v1/visitation-reports/stale-doctors',
+    actor: 'manager',
+    addressable: false,
+  },
   // --- finalidades da visita (CRMLAB-190, D-330): todos leem, gestor+ escreve ---
   {
     name: 'GET /settings/visit-purposes',
@@ -1683,7 +1700,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-190/D-330 soma 3: `GET|POST /settings/visit-purposes` e
     // `PATCH /settings/visit-purposes/:id`.
     // CRMLAB-189/D-329 soma 3: `GET /doctors/portfolios`, `POST /doctors/transfer` e `GET /doctors/lookup`.
-    expect(LAB_ROUTES).toHaveLength(142);
+    // CRMLAB-193/D-333 soma 2: `GET /visitation-reports/summary` e `GET /visitation-reports/stale-doctors`.
+    expect(LAB_ROUTES).toHaveLength(144);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

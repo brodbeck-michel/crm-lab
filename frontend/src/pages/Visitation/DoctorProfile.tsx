@@ -1,21 +1,16 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH,
   DOCTOR_INTERACTION_TYPES,
   DOCTOR_INTERACTION_TYPE_LABELS,
-  VISIT_STATUS_LABELS,
-  VISIT_TYPE_LABELS,
-  visitDurationMinutes,
   type CreateDoctorInteractionRequest,
   type Doctor,
   type DoctorInteractionType,
   type DoctorTimelineInteraction,
   type DoctorTimelineItem,
-  type DoctorTimelineVisit,
-  type VisitStatus,
 } from '@crm-lab/shared';
 import { doctorsApi } from '@/api/doctors';
 import { useVisitationResponsibles } from './visitation-access';
@@ -26,9 +21,8 @@ import { useApiErrorHandler } from '@/hooks';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { EmptyState, Modal } from '@/components/shared';
 import { Button, Chip, Input, Select, TextArea, useToast } from '@/components/ui';
-import type { ChipTone } from '@/components/ui';
 import { formatDateTime, fromDateTimeInputs, toDateInput, toTimeInput } from './agenda-dates';
-import { PurposeDot } from './agenda-ui';
+import { FeedComments, FeedFilter, VisitFeedItem, type FeedFilterValue } from './DoctorFeed';
 import { DoctorModal, crmLabel } from './Doctors';
 import {
   AbcBadge,
@@ -43,13 +37,6 @@ import { formatIsoDay } from '@/lib/format';
 
 const PAGE_SIZE = 20;
 
-const STATUS_TONES: Record<VisitStatus, ChipTone> = {
-  agendada: 'attention',
-  realizada: 'positive',
-  cancelada: 'inactive',
-  nao_recebeu: 'inactive',
-};
-
 /** Registro aberto no modal: novo ou edição de um existente. */
 type InteractionModalState = { kind: 'new' } | { kind: 'edit'; interaction: DoctorTimelineInteraction } | null;
 
@@ -58,7 +45,8 @@ type InteractionModalState = { kind: 'new' } | { kind: 'edit'; interaction: Doct
  * §13 · CRMLAB-89, D-261). Dados do cadastro no topo (editar reaproveita o
  * modal da lista) e a linha do tempo embaixo: as visitas do médico e os
  * registros lançados à mão (ligação, e-mail, WhatsApp), do mais novo para o
- * mais antigo, com "Carregar mais".
+ * mais antigo, com "Carregar mais". Desde o CRMLAB-192 (D-332) é um feed: a
+ * visita completa, comentários em cada item e filtro por tipo (`DoctorFeed.tsx`).
  *
  * Todo papel do laboratório vê, lança, edita e exclui (resposta 2A do épico).
  * Médico de outro laboratório responde `404` e a tela diz "não encontrado".
@@ -254,12 +242,17 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
   const handleApiError = useApiErrorHandler();
   const { toast } = useToast();
   const [modal, setModal] = useState<InteractionModalState>(null);
+  const [filter, setFilter] = useState<FeedFilterValue>('tudo');
 
   const timelineQuery = useInfiniteQuery({
-    queryKey: queryKeys.doctorTimeline(doctorId),
+    queryKey: queryKeys.doctorTimelineFiltered(doctorId, filter),
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
-      doctorsApi.timeline(doctorId, { limit: PAGE_SIZE, ...(pageParam ? { cursor: pageParam } : {}) }),
+      doctorsApi.timeline(doctorId, {
+        limit: PAGE_SIZE,
+        ...(pageParam ? { cursor: pageParam } : {}),
+        ...(filter !== 'tudo' ? { types: [filter] } : {}),
+      }),
     getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 
@@ -285,6 +278,8 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
         </Button>
       </div>
 
+      <FeedFilter value={filter} onChange={setFilter} />
+
       {timelineQuery.isLoading ? (
         <p className="m-0 font-body text-body text-neutral-600">Carregando linha do tempo...</p>
       ) : timelineQuery.isError ? (
@@ -298,10 +293,14 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
           }
         />
       ) : items.length === 0 ? (
-        <EmptyState
-          message="Nenhuma interação ainda"
-          hint="As visitas da Agenda aparecem aqui. Ligações, e-mails e mensagens você registra pelo botão acima."
-        />
+        filter === 'tudo' ? (
+          <EmptyState
+            message="Nenhuma interação ainda"
+            hint="As visitas da Agenda aparecem aqui. Ligações, e-mails e mensagens você registra pelo botão acima."
+          />
+        ) : (
+          <EmptyState message="Nada deste tipo" hint="Escolha outro filtro ou volte para Tudo." />
+        )
       ) : (
         <>
           <ol className="m-0 flex list-none flex-col gap-sm p-0" data-testid="doctor-timeline">
@@ -312,6 +311,7 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
               >
                 <TimelineItem
                   item={item}
+                  doctorId={doctorId}
                   onEdit={(interaction) => setModal({ kind: 'edit', interaction })}
                   onDelete={(interaction) => {
                     if (!window.confirm('Excluir este registro? Não dá para desfazer.')) return;
@@ -319,6 +319,7 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
                   }}
                   deleting={remove.isPending && remove.variables === item.id}
                 />
+                <FeedComments item={item} doctorId={doctorId} />
               </li>
             ))}
           </ol>
@@ -349,16 +350,17 @@ function DoctorTimeline({ doctorId }: { doctorId: string }) {
 
 interface TimelineItemProps {
   item: DoctorTimelineItem;
+  doctorId: string;
   onEdit: (interaction: DoctorTimelineInteraction) => void;
   onDelete: (interaction: DoctorTimelineInteraction) => void;
   deleting: boolean;
 }
 
 /** Uma espécie, um corpo — o `switch` é em `kind`. */
-function TimelineItem({ item, onEdit, onDelete, deleting }: TimelineItemProps) {
+function TimelineItem({ item, doctorId, onEdit, onDelete, deleting }: TimelineItemProps) {
   switch (item.kind) {
     case 'visit':
-      return <VisitItem visit={item} />;
+      return <VisitFeedItem visit={item} doctorId={doctorId} />;
     case 'interaction':
       return <InteractionItem interaction={item} onEdit={onEdit} onDelete={onDelete} deleting={deleting} />;
     default: {
@@ -366,42 +368,6 @@ function TimelineItem({ item, onEdit, onDelete, deleting }: TimelineItemProps) {
       return never;
     }
   }
-}
-
-function VisitItem({ visit }: { visit: DoctorTimelineVisit }) {
-  const duration = visitDurationMinutes(visit);
-  const details = [
-    VISIT_TYPE_LABELS[visit.type],
-    visit.responsible ? `com ${visit.responsible.name}` : null,
-    duration !== null ? `${duration} min` : null,
-    visit.attachmentCount > 0 ? `${visit.attachmentCount} anexo${visit.attachmentCount > 1 ? 's' : ''}` : null,
-  ].filter(Boolean);
-
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-sm">
-        <div className="flex flex-wrap items-center gap-sm">
-          <span className="inline-flex items-center gap-[6px] font-heading text-label font-semibold text-text">
-            <PurposeDot color={visit.purpose.color} />
-            {visit.purpose.name}
-          </span>
-          <Chip tone={STATUS_TONES[visit.status]}>{VISIT_STATUS_LABELS[visit.status]}</Chip>
-          <span className="text-caption tabular-nums text-neutral-600">{formatDateTime(visit.occurredAt)}</span>
-        </div>
-        <Link
-          to={`/visitation/agenda?visit=${visit.id}`}
-          className="text-caption font-semibold text-accent-700 hover:underline"
-        >
-          Abrir visita
-        </Link>
-      </div>
-      <p className="m-0 text-caption text-text">{details.join(' · ')}</p>
-      {visit.statusReason && <p className="m-0 text-caption text-neutral-600">Motivo: {visit.statusReason}</p>}
-      {visit.reportExcerpt && (
-        <p className="m-0 whitespace-pre-wrap font-body text-body text-text">{visit.reportExcerpt}</p>
-      )}
-    </>
-  );
 }
 
 interface InteractionItemProps {

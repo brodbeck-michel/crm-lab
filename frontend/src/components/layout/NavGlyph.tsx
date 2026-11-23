@@ -62,6 +62,7 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   doctors: Stethoscope,
   agenda: CalendarDays,
   portfolios: Briefcase,
+  'visit-report': FileBarChart2,
 };
 
 export interface NavGlyphProps {

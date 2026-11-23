@@ -7563,3 +7563,67 @@ exclui anexo") passa a valer dentro do escopo acima.
 que enumeravam papéis; frontend `route-config.ts`, `Sidebar`, `pages/Visitation/*` (`Portfolios.tsx` novo),
 gestão de usuários; seeds. SCHEMA §52, API_CONTRACTS §1/§13/§14, BUSINESS_RULES §12–§15, SECURITY
 "Autorização", PAGES §22–§23 e §22c.
+
+## 2026-11-22 — Feed do médico: relato completo, comentários, editar relato e filtro (CRMLAB-192, épico CRMLAB-187)
+
+### D-332: A linha do tempo do médico vira feed — visita completa, comentários por item, relato editável e filtro por tipo
+**Contexto:** a linha do tempo da ficha (D-261) mostrava da visita só um trecho de 280 caracteres do
+relato e o número de anexos; para ler o relato inteiro, ver os anexos ou corrigir o texto era preciso
+ir à Agenda. O gestor também não tinha onde comentar uma visita ou um registro ("ligou de novo?",
+"manda o material") sem sair do CRM.
+**Decisão (escopo aprovado pelo dono do produto no card; itens 2, 5, 6, 8, 9, 10 e 11 decididos na
+implementação, sempre pela opção conservadora):**
+1. **Item de visita completo no feed.** `DoctorTimelineVisit` ganha `report` (o `VisitReport`
+   inteiro: apresentado, feedback, objeções), `nextVisitDate` e `attachments` (`VisitAttachment[]`,
+   mais antigo primeiro). `reportExcerpt` e `attachmentCount` **continuam** no shape (compatíveis).
+   A tela mostra avatar + nome do responsável, data/hora, finalidade (cor) e modo, selo de status, o
+   relato com rótulos, a linha "Check-in às HH:MM de dd/mm · Check-out às HH:MM de dd/mm" + duração
+   (sem GPS, D-258) e os anexos em **miniatura** (imagem) ou **ícone** (PDF), abrindo pelo download
+   que já existe (`GET /visits/:id/attachments/:attachmentId`). A miniatura usa o mesmo download
+   autenticado (não há rota de thumbnail).
+2. **"Ver mais":** cada campo do relato aparece cortado em **4 linhas** (`line-clamp-4`); o botão
+   aparece quando algum campo passa disso (estimativa por quebras de linha + 90 caracteres por linha,
+   determinística e testável sem medir layout) e expande o relato inteiro do item.
+3. **Comentários** em cada item do feed (visita **ou** registro manual), tabela nova
+   `doctor_timeline_comments` (migração 074, SCHEMA §38a): `tenant_id`, `visit_id` **ou**
+   `interaction_id` (`CHECK` de exatamente um; FKs com `ON DELETE CASCADE`), `author_id`
+   (`ON DELETE SET NULL`), `body` (1..2000, aparado), `created_at`, `updated_at`, `edited_at`
+   (`NULL` = nunca editado). RLS padrão na mesma migração.
+4. **Quem comenta = quem alcança a ficha** (escopo D-329): representante só em médico da carteira
+   dele (fora → `404`), gestor e admin em todos; atendente `403`. Item de **outro médico** no corpo,
+   ou comentário de outro médico no caminho → `404`.
+5. **Só o autor edita** o próprio comentário; **o autor e o admin excluem** (o gestor não exclui
+   comentário de colega — conservador, na linha da mensagem do chat interno, D-282). Recusa a quem vê
+   o comentário mas não pode mexer → `403 FORBIDDEN` com `details.reason: "not_author"` (o comentário
+   é visível para ele, não há existência a esconder). Autor que perdeu o acesso ao médico
+   (transferência de carteira) não alcança mais o comentário (`404`), como qualquer item da ficha.
+6. **Comentários embutidos no item** (`comments: DoctorTimelineComment[]`, mais antigo primeiro),
+   não em rota paginada própria: a tela já pagina os itens, e um teto de **100 comentários por
+   item** (`DOCTOR_TIMELINE_COMMENTS_PER_ITEM_MAX`; o 101º → `VALIDATION_ERROR` em `body`) limita o
+   peso de cada página. Três rotas novas no `doctorModule`: `POST /doctors/:id/comments`
+   (`{ itemKind, itemId, body }`), `PATCH|DELETE /doctors/:id/comments/:commentId`. Inventário de
+   isolamento 142 → 145.
+7. **Auditoria:** `create_doctor_timeline_comment`, `update_doctor_timeline_comment` (só se o texto
+   mudou), `delete_doctor_timeline_comment` (`oldValues` com o texto apagado), todos com
+   `entityType: "doctor_timeline_comment"` e `{ doctorId, itemKind, itemId, body }`.
+8. **Excluir comentário apaga a linha** (o rastro fica no audit, como D-261 item 5). Excluir um
+   registro manual apaga os comentários dele junto (`CASCADE`); visita não se apaga.
+9. **Editar o relato pelo feed** reaproveita `PATCH /visits/:id/report` (sem rota nova): mesmas
+   regras de hoje (D-258 item 6 — só `agendada`/`realizada`; escopo D-329 da visita, que contém o
+   da ficha). Pela ficha o relato edita só os três textos; a data de retorno continua no modal da
+   Agenda. Ao salvar, a tela recarrega o feed e o detalhe da visita em cache.
+10. **Filtro por tipo:** `GET /doctors/:id/timeline?types=visita,ligacao,email,whatsapp` (lista
+    separada por vírgula, um ou mais de `DOCTOR_TIMELINE_FILTERS`; ausente = tudo; valor fora da
+    lista → `VALIDATION_ERROR`). O filtro vale **no SQL**, antes do cursor, então a paginação
+    continua sem buraco. Na tela, chips de escolha única "Tudo · Visitas · Ligações · WhatsApp ·
+    E-mail"; trocar o filtro recomeça a lista.
+11. **Comentário em visita encerrada** (cancelada/não recebeu) e em médico **inativo** é aceito: o
+    comentário é conversa sobre o histórico, não altera a visita.
+**Impacto:** `backend/migrations/074_doctor_timeline_comments.sql`; `shared/types/doctor-timeline.types.ts`;
+`doctor-interaction.repository.ts`, `doctor-timeline-comment.repository.ts` (novo),
+`doctor-interaction.service.ts`, `doctor.routes.ts`, `visit.repository.ts` (`toAttachment` exportado);
+frontend `api/doctors.ts`, `api/query-keys.ts`, `pages/Visitation/DoctorProfile.tsx`, `DoctorFeed.tsx`
+(novo), `VisitRecord.tsx` (`openVisitAttachment` exportado); testes
+`tests/db/migration-074-doctor-timeline-comments.spec.ts`, `tests/doctors/doctor-timeline-feed.spec.ts`,
+inventário (142 → 145), `DoctorProfile.spec.tsx`. SCHEMA §38a, API_CONTRACTS §13, BUSINESS_RULES §15,
+PAGES §22b, SERVICES §32, SECURITY "Visitação Médica".

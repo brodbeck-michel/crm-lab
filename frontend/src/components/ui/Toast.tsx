@@ -9,11 +9,21 @@ export interface ToastOptions {
   tone?: ToastTone;
   /** ms até sumir sozinho. `0` mantém até o usuário fechar. Padrão 4000. */
   durationMs?: number;
+  /** Botão no toast (ex.: "Desfazer") — executa e fecha (CRMLAB-191, D-331). */
+  action?: ToastAction;
 }
 
-export interface ToastItem extends Required<ToastOptions> {
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface ToastItem {
   id: string;
   message: string;
+  tone: ToastTone;
+  durationMs: number;
+  action: ToastAction | null;
 }
 
 export interface ToastApi {
@@ -54,6 +64,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         message,
         tone: options.tone ?? 'neutral',
         durationMs: options.durationMs ?? 4000,
+        action: options.action ?? null,
       };
       setItems((current) => [...current, item]);
 
@@ -101,6 +112,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             )}
           >
             <span className="min-w-0 flex-1">{item.message}</span>
+            {item.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  item.action?.onClick();
+                  dismiss(item.id);
+                }}
+                className="flex-[0_0_auto] cursor-pointer rounded-pill border-none bg-transparent px-xs font-body text-label font-bold text-current underline underline-offset-2"
+              >
+                {item.action.label}
+              </button>
+            )}
             <button
               type="button"
               aria-label="Fechar notificação"

@@ -7563,3 +7563,52 @@ exclui anexo") passa a valer dentro do escopo acima.
 que enumeravam papéis; frontend `route-config.ts`, `Sidebar`, `pages/Visitation/*` (`Portfolios.tsx` novo),
 gestão de usuários; seeds. SCHEMA §52, API_CONTRACTS §1/§13/§14, BUSINESS_RULES §12–§15, SECURITY
 "Autorização", PAGES §22–§23 e §22c.
+
+## 2026-11-22 — Agenda: visão Mês e arrastar para reagendar (CRMLAB-191, épico CRMLAB-187)
+
+### D-331: Visão Mês na Agenda e reagendamento por arrastar e soltar (HTML5 nativo, sem dependência)
+**Contexto:** a Agenda de visitas (PAGES §23, D-262) só tinha Semana e Lista, e reagendar exigia
+abrir a visita e usar [Reagendar]. O gestor quer ver o mês inteiro de longe e mover visitas com o
+mouse. Nada muda no servidor: o arrastar usa o `POST /visits/:id/reschedule` que já existe
+(histórico em `doctor_visit_reschedules`, `rescheduleCount`, audit `reschedule_visit`, 409 para
+visita com check-in ou fechada, 404 fora do escopo do representante).
+**Decisão (escopo aprovado do CRMLAB-191; itens marcados "dev" são ambiguidades resolvidas pelo dev):**
+1. **Seletor Semana | Mês | Lista.** A Mês é uma grade **seg–dom** com as semanas que tocam o mês
+   (4 a 6 linhas); os dias de fora do mês aparecem esmaecidos, com as visitas deles. Uma consulta
+   `GET /visits` cobre da segunda da primeira semana à segunda depois da última (no máximo 42 dias,
+   dentro dos 62 de `VISIT_LIST_MAX_DAYS`). Navegação [‹] [Hoje] [›] anda de mês em mês
+   ("Mês anterior"/"Próximo mês"). Filtros (status, finalidade, responsável, médico) valem igual,
+   na tela, sobre o período carregado; os chips contam esse período; a coluna de resumo mostra
+   "Resumo do mês" na visão Mês (mesmo cálculo do resumo da semana).
+2. **Cartão do dia:** ícone de status + "HH:MM Médico" + avatar do responsável, na **cor da
+   finalidade** (os nomes da finalidade e do status vão no `aria-label`/`title`). Cabem **3**; com 4
+   ou mais, mostra 2 e **"+N"**.
+3. **(dev) "+N" leva para a Semana daquele dia** (em vez de popover): a Semana já mostra o dia todo,
+   com o mesmo arrastar, e não cria componente novo. Clicar no número do dia faz o mesmo; clicar no
+   vazio da célula abre "Nova visita" naquele dia às 09:00 (como a grade da Semana).
+4. **Arrastar e soltar só no desktop**, com **HTML5 drag-and-drop nativo** — o mesmo mecanismo do
+   funil de orçamentos (`ProposalCard`/`StageColumn`). **Nenhuma dependência nova.** Mês: soltar em
+   outro dia **mantém a hora** e troca a data. Semana: soltar troca dia e hora, com **encaixe de
+   30 min** pelo topo do cartão (posição do ponteiro menos o ponto onde o cartão foi pego),
+   arredondado para a meia hora mais próxima e preso na faixa 07:00–20:30 da grade.
+5. **Quem pode pegar:** só visita `agendada` **sem check-in** (`isVisitOpen` e `checkInAt` nulo);
+   realizada, cancelada, não recebeu e com check-in não ficam arrastáveis. **Representante** só
+   arrasta visita em que **ele é o responsável**; gestor/admin, qualquer uma do período. É UX: o
+   servidor valida de novo.
+6. **(dev) Sem motivo no arrastar:** o reagendamento vai com `reason: null` e, no sucesso, aparece
+   o toast "Visita reagendada para <dia> às <hora>" com **[Desfazer]** (8 s). Desfazer chama o
+   mesmo `POST /visits/:id/reschedule` de volta para a data anterior — o histórico fica com as duas
+   mudanças e o `rescheduleCount` soma 2 (transparente; nada é apagado). Quem quer registrar motivo
+   usa [Reagendar], que continua sendo o caminho por teclado (o arrastar é só atalho).
+7. **Otimista com reversão:** o cartão muda de lugar na hora; erro de rede ou 409
+   (`VISIT_ALREADY_CHECKED_IN`/`VISIT_ALREADY_CLOSED`) **devolve o cartão ao lugar** e recarrega a
+   agenda. 409 → toast "Esta visita não pode mais ser reagendada (já tem check-in ou foi
+   encerrada)."; outros erros pelo tratador padrão. Soltar no mesmo dia/horário não chama a API.
+8. **Celular (< 768px):** seletor Semana | Mês no topo. Na Mês, a faixa da semana vira o **mês em
+   grade** com **um ponto por dia com visita**; tocar no dia mostra a lista do dia embaixo
+   (os mesmos cartões). Sem arrastar.
+9. **Toast com ação:** `toast(msg, { action: { label, onClick } })` — botão no toast que executa a
+   ação e fecha (COMPONENTS.md "Toast").
+**Impacto:** só frontend e docs. `pages/Visitation/Agenda.tsx`, `AgendaWeek.tsx`, `AgendaMonth.tsx`
+(novo), `AgendaMobile.tsx`, `AgendaRail.tsx`, `agenda-dates.ts`, `agenda-drag.ts` (novo);
+`components/ui/Toast.tsx`. PAGES §23, COMPONENTS "Toast". API_CONTRACTS e SCHEMA sem mudança.

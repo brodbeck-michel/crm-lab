@@ -32,6 +32,30 @@ describe('Toast', () => {
     }
   });
 
+  it('ação no toast executa e fecha (CRMLAB-191, D-331)', async () => {
+    const onUndo = vi.fn();
+    function WithAction() {
+      const { toast } = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => toast('Visita reagendada', { action: { label: 'Desfazer', onClick: onUndo } })}
+        >
+          Mover
+        </button>
+      );
+    }
+    render(
+      <ToastProvider>
+        <WithAction />
+      </ToastProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Mover' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Desfazer' }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Visita reagendada')).not.toBeInTheDocument();
+  });
+
   it('exibe a mensagem enfileirada', async () => {
     render(
       <ToastProvider>

@@ -4371,3 +4371,26 @@ o arrastar usa o `POST /visits/:id/reschedule` existente; nenhuma migração.
 - **testes:** `AgendaMonthDrag.spec.tsx` (13: grade, +N, navegação, filtros, arrastar na Mês e na
   Semana com encaixe, bloqueio por status/check-in/representante, 409 e rede revertem, desfazer,
   celular) + `Toast.spec` (ação).
+
+### ✅ CRMLAB-192 — Feed do médico: relato completo, comentários, editar relato e filtro (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-192-feed-medico` (épico Visitação v2, CRMLAB-187). Contrato: D-332, SCHEMA §38a,
+API_CONTRACTS §13, BUSINESS_RULES §15, PAGES §22b, SERVICES §32, SECURITY "Visitação Médica".
+- **db:** `074_doctor_timeline_comments.sql` — comentários com `visit_id` **ou** `interaction_id`
+  (`CHECK` de exatamente um, FKs `ON DELETE CASCADE`), `author_id` (`SET NULL`), `body` 1..2000,
+  `edited_at`; RLS na mesma migração. Teste `tests/db/migration-074-doctor-timeline-comments.spec.ts`.
+- **shared:** `doctor-timeline.types.ts` — `DOCTOR_TIMELINE_FILTERS` (+ rótulos), `DoctorTimelineComment`,
+  `Create/UpdateDoctorTimelineCommentRequest`, `doctorTimelineCommentPermissions`, teto de 100 por item;
+  visita do feed com `report`, `nextVisitDate`, `attachments`; `comments` em todo item; `types` na query.
+- **api:** `GET /doctors/:id/timeline?types=` (filtro no SQL, antes do cursor); `POST /doctors/:id/comments`,
+  `PATCH|DELETE /doctors/:id/comments/:commentId` (escopo D-329; só o autor edita; autor ou admin exclui;
+  `403 not_author`; audit `create_/update_/delete_doctor_timeline_comment`). Editar relato pela ficha reusa
+  `PATCH /visits/:id/report`. Testes `tests/doctors/doctor-timeline-feed.spec.ts` + inventário (142 → 145).
+- **ui:** `pages/Visitation/DoctorFeed.tsx` (novo) — filtro Tudo/Visitas/Ligações/WhatsApp/E-mail, visita
+  com avatar, finalidade/modo, selo, check-in/out + duração, relato com rótulos e "Ver mais", anexos em
+  miniatura/ícone, [Editar relato], comentários (criar/editar/excluir). `VisitRecord.tsx` exporta
+  `openVisitAttachment`. Testes em `DoctorProfile.spec.tsx`.
+- **Decisões conservadoras (D-332):** gestor não exclui comentário de colega (só autor e admin);
+  comentários embutidos no item com teto de 100 (sem rota paginada); "Ver mais" por estimativa de linhas
+  (4 linhas, 90 caracteres/linha); comentário aceito em visita encerrada e médico inativo; relato pela ficha
+  edita só os três textos (data de retorno segue na Agenda).

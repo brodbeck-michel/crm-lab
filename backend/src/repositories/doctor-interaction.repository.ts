@@ -13,12 +13,14 @@ import type {
   DoctorTimelineInteraction,
   DoctorTimelineItem,
   DoctorTimelineVisit,
+  VisitAttachment,
   VisitPerson,
   VisitPurposeColor,
   VisitStatus,
   VisitType,
 } from '@crm-lab/shared';
 import type { DbClient, DbTx } from '../db/types.js';
+import { toAttachment, type AttachmentRow } from './visit.repository.js';
 
 const COLUMNS = `i.id, i.doctor_id, i.type, i.occurred_at, i.description,
   i.created_by, cu.name AS created_by_name, i.updated_by, uu.name AS updated_by_name,
@@ -65,6 +67,7 @@ interface TimelineRow {
   report_presented: string | null;
   report_feedback: string | null;
   report_objections: string | null;
+  next_visit_date: string | null;
   attachment_count: number | string | null;
   // registro manual
   doctor_id: string;
@@ -139,6 +142,15 @@ function toTimelineEntry(row: TimelineRow): TimelineEntry {
       statusReason: row.status_reason,
       reportExcerpt: null,
       attachmentCount: Number(row.attachment_count ?? 0),
+      report: {
+        presented: row.report_presented,
+        doctorFeedback: row.report_feedback,
+        objections: row.report_objections,
+      },
+      nextVisitDate: row.next_visit_date,
+      // Anexos e comentarios: o service completa com uma consulta por pagina.
+      attachments: [],
+      comments: [],
     };
     return {
       item: visit,
@@ -160,6 +172,7 @@ function toTimelineEntry(row: TimelineRow): TimelineEntry {
     updatedBy: person(row.updated_by, row.updated_by_name),
     createdAt: isoDateTime(row.created_at as Date | string),
     updatedAt: isoDateTime(row.updated_at as Date | string),
+    comments: [],
   };
   return { item: interaction, report: null };
 }
@@ -194,6 +207,16 @@ const PATCH_COLUMNS: Record<keyof DoctorInteractionPatch, string> = {
 const VISIT_SORT_AT = `date_trunc('milliseconds', COALESCE(v.check_in_at, v.scheduled_at))`;
 const INTERACTION_SORT_AT = `date_trunc('milliseconds', i.occurred_at)`;
 
+/**
+ * Filtro por tipo (CRMLAB-192, D-332), ja validado pelo service: `visits`
+ * liga/desliga o lado das visitas; `interactionTypes` e a lista de tipos de
+ * registro manual que entram (vazia = nenhum).
+ */
+export interface TimelineFilter {
+  visits: boolean;
+  interactionTypes: DoctorInteractionType[];
+}
+
 export class DoctorInteractionRepository {
   constructor(private readonly db: DbClient) {}
 
@@ -207,12 +230,14 @@ export class DoctorInteractionRepository {
     doctorId: string,
     limit: number,
     cursor: TimelineCursor | null,
+    filter: TimelineFilter,
   ): Promise<TimelineEntry[]> {
-    const params: unknown[] = [doctorId];
+    // $1 medico, $2 visitas entram?, $3 tipos de registro que entram.
+    const params: unknown[] = [doctorId, filter.visits, filter.interactionTypes];
     let after = '';
     if (cursor !== null) {
       params.push(cursor.sortAt, cursor.id);
-      after = `WHERE (t.sort_at, t.id) < ($2::timestamptz, $3::uuid)`;
+      after = `WHERE (t.sort_at, t.id) < ($4::timestamptz, $5::uuid)`;
     }
     params.push(limit + 1);
 
@@ -224,6 +249,7 @@ export class DoctorInteractionRepository {
           v.scheduled_at, v.check_in_at, v.check_out_at,
           v.responsible_user_id, ru.name AS responsible_name, v.status_reason,
           v.report_presented, v.report_feedback, v.report_objections,
+          to_char(v.next_visit_date, 'YYYY-MM-DD') AS next_visit_date,
           (SELECT COUNT(*)::int FROM doctor_visit_attachments a WHERE a.visit_id = v.id) AS attachment_count,
           v.doctor_id, NULL::varchar AS interaction_type, NULL::text AS description,
           NULL::uuid AS created_by, NULL::varchar AS created_by_name,
@@ -232,20 +258,20 @@ export class DoctorInteractionRepository {
         FROM doctor_visits v
         JOIN visit_purposes vp ON vp.id = v.purpose_id
         LEFT JOIN users ru ON ru.id = v.responsible_user_id
-        WHERE v.doctor_id = $1
+        WHERE v.doctor_id = $1 AND $2::boolean
         UNION ALL
         SELECT 'interaction' AS kind, i.id, ${INTERACTION_SORT_AT} AS sort_at,
           NULL::varchar, NULL::varchar,
           NULL::uuid, NULL::varchar, NULL::varchar,
           NULL::timestamptz, NULL::timestamptz, NULL::timestamptz,
           NULL::uuid, NULL::varchar, NULL::varchar,
-          NULL::text, NULL::text, NULL::text,
+          NULL::text, NULL::text, NULL::text, NULL::text,
           NULL::int,
           i.doctor_id, i.type, i.description,
           i.created_by, cu.name, i.updated_by, uu.name,
           i.created_at, i.updated_at
         ${FROM}
-        WHERE i.doctor_id = $1
+        WHERE i.doctor_id = $1 AND i.type = ANY($3::varchar[])
       ) t
       ${after}
       ORDER BY t.sort_at DESC, t.id DESC
@@ -255,6 +281,30 @@ export class DoctorInteractionRepository {
       const result = await tx.query<TimelineRow>(sql, params);
       return result.rows.map(toTimelineEntry);
     });
+  }
+
+  /** Anexos das visitas informadas (CRMLAB-192), mais antigo primeiro, por visita. */
+  async attachmentsForVisits(tenantId: string, visitIds: string[]): Promise<Map<string, VisitAttachment[]>> {
+    const byVisit = new Map<string, VisitAttachment[]>();
+    if (visitIds.length === 0) return byVisit;
+    const rows = await this.db.withTenant(tenantId, async (tx) => {
+      const result = await tx.query<AttachmentRow & { visit_id: string }>(
+        `SELECT a.visit_id, a.id, a.file_name, a.mime_type, a.byte_size, a.uploaded_by,
+                u.name AS uploaded_by_name, a.created_at
+           FROM doctor_visit_attachments a
+           LEFT JOIN users u ON u.id = a.uploaded_by
+          WHERE a.visit_id = ANY($1::uuid[])
+          ORDER BY a.created_at ASC, a.id ASC`,
+        [visitIds],
+      );
+      return result.rows;
+    });
+    for (const row of rows) {
+      const list = byVisit.get(row.visit_id) ?? [];
+      list.push(toAttachment(row));
+      byVisit.set(row.visit_id, list);
+    }
+    return byVisit;
   }
 
   /** Registro do medico informado — de outro medico (ou tenant) e `null`. */

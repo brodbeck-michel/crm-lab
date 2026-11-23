@@ -16,8 +16,21 @@
  *    um contato com medico inativo aconteceu do mesmo jeito;
  *  - excluir apaga a linha; o rastro fica no audit;
  *  - audit log em criar, editar (so o diff) e excluir.
+ *
+ * Feed (CRMLAB-192, D-332): filtro por tipo no SQL, visita com relato inteiro
+ * e anexos, e comentarios em todo item (`doctor_timeline_comments`): quem
+ * alcanca a ficha comenta; so o autor edita; o autor e o admin excluem.
  */
 import {
+  DOCTOR_INTERACTION_TYPES,
+  DOCTOR_TIMELINE_COMMENT_MAX_LENGTH,
+  DOCTOR_TIMELINE_COMMENTS_PER_ITEM_MAX,
+  doctorTimelineCommentPermissions,
+  type CreateDoctorTimelineCommentRequest,
+  type DoctorTimelineComment,
+  type DoctorTimelineFilter,
+  type DoctorTimelineItem,
+  type UpdateDoctorTimelineCommentRequest,
   DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH,
   DOCTOR_INTERACTION_FUTURE_TOLERANCE_MS,
   DOCTOR_TIMELINE_DEFAULT_LIMIT,
@@ -37,8 +50,10 @@ import {
   type DoctorInteractionPatch,
   type TimelineCursor,
   type TimelineEntry,
+  type TimelineFilter,
   type TimelineVisitReport,
 } from '../repositories/doctor-interaction.repository.js';
+import { DoctorTimelineCommentRepository } from '../repositories/doctor-timeline-comment.repository.js';
 import { DoctorRepository } from '../repositories/doctor.repository.js';
 import type { AuditService } from './audit.service.js';
 import { assertVisitationRole, portfolioOwner } from './visitation-access.js';
@@ -53,6 +68,18 @@ export interface DoctorInteractionService {
     dto: UpdateDoctorInteractionRequest,
   ): Promise<DoctorInteraction>;
   delete(ctx: TenantContext, doctorId: string, id: string): Promise<void>;
+  createComment(
+    ctx: TenantContext,
+    doctorId: string,
+    dto: CreateDoctorTimelineCommentRequest,
+  ): Promise<DoctorTimelineComment>;
+  updateComment(
+    ctx: TenantContext,
+    doctorId: string,
+    commentId: string,
+    dto: UpdateDoctorTimelineCommentRequest,
+  ): Promise<DoctorTimelineComment>;
+  deleteComment(ctx: TenantContext, doctorId: string, commentId: string): Promise<void>;
 }
 
 export interface DoctorInteractionServiceDeps {
@@ -101,6 +128,26 @@ function clampLimit(value: number | undefined): number {
   return Math.min(Math.max(Math.trunc(value), 1), DOCTOR_TIMELINE_MAX_LIMIT);
 }
 
+/** Filtro do fio -> o que o repositorio aplica. Ausente/vazio = tudo. */
+export function timelineFilter(types: DoctorTimelineFilter[] | undefined): TimelineFilter {
+  if (types === undefined || types.length === 0) {
+    return { visits: true, interactionTypes: [...DOCTOR_INTERACTION_TYPES] };
+  }
+  return {
+    visits: types.includes('visita'),
+    interactionTypes: DOCTOR_INTERACTION_TYPES.filter((type) => types.includes(type)),
+  };
+}
+
+/** Visao do comentario para o audit. */
+function commentAuditView(doctorId: string, comment: DoctorTimelineComment): Record<string, unknown> {
+  return { doctorId, itemKind: comment.itemKind, itemId: comment.itemId, body: comment.body };
+}
+
+function notAuthor(): BusinessError {
+  return new BusinessError('FORBIDDEN', { reason: 'not_author' });
+}
+
 /** Visao "plana" do registro para o audit. */
 function auditView(interaction: DoctorInteraction): Record<string, unknown> {
   return {
@@ -114,6 +161,7 @@ function auditView(interaction: DoctorInteraction): Record<string, unknown> {
 export function createDoctorInteractionService(deps: DoctorInteractionServiceDeps): DoctorInteractionService {
   const repository = new DoctorInteractionRepository(deps.db);
   const doctors = new DoctorRepository(deps.db);
+  const comments = new DoctorTimelineCommentRepository(deps.db);
   const audit = deps.audit;
   const now = deps.now ?? (() => new Date());
 
@@ -145,16 +193,65 @@ export function createDoctorInteractionService(deps: DoctorInteractionServiceDep
     return new Date(time).toISOString();
   }
 
+  function cleanCommentBody(value: string): string {
+    const body = value.trim();
+    if (body.length === 0) throw invalid({ body: 'Escreva o comentário' });
+    if (body.length > DOCTOR_TIMELINE_COMMENT_MAX_LENGTH) {
+      throw invalid({ body: `No máximo ${DOCTOR_TIMELINE_COMMENT_MAX_LENGTH} caracteres` });
+    }
+    return body;
+  }
+
+  /** Anexos das visitas e comentarios de todos os itens da pagina — duas consultas. */
+  async function enrich(tenantId: string, items: DoctorTimelineItem[]): Promise<DoctorTimelineItem[]> {
+    const visitIds = items.filter((item) => item.kind === 'visit').map((item) => item.id);
+    const interactionIds = items.filter((item) => item.kind === 'interaction').map((item) => item.id);
+    const [attachments, pageComments] = await Promise.all([
+      repository.attachmentsForVisits(tenantId, visitIds),
+      comments.listForItems(tenantId, visitIds, interactionIds),
+    ]);
+    const byItem = new Map<string, DoctorTimelineComment[]>();
+    for (const comment of pageComments) {
+      const key = `${comment.itemKind}:${comment.itemId}`;
+      const list = byItem.get(key) ?? [];
+      list.push(comment);
+      byItem.set(key, list);
+    }
+    return items.map((item) => {
+      const itemComments = byItem.get(`${item.kind}:${item.id}`) ?? [];
+      return item.kind === 'visit'
+        ? { ...item, attachments: attachments.get(item.id) ?? [], comments: itemComments }
+        : { ...item, comments: itemComments };
+    });
+  }
+
+  /** Comentario de item DESTE medico, no escopo de quem pede; senao `NOT_FOUND`. */
+  async function loadComment(ctx: TenantContext, doctorId: string, commentId: string): Promise<DoctorTimelineComment> {
+    await assertDoctor(ctx, doctorId);
+    const comment = await comments.findById(ctx.tenantId, doctorId, commentId);
+    if (!comment) throw notFound({ resource: 'doctor_timeline_comment', id: commentId });
+    return comment;
+  }
+
   return {
     async timeline(ctx, doctorId, query) {
       await assertDoctor(ctx, doctorId);
       const limit = clampLimit(query.limit);
       const cursor = query.cursor !== undefined ? decodeTimelineCursor(query.cursor) : null;
 
-      const entries: TimelineEntry[] = await repository.timeline(ctx.tenantId, doctorId, limit, cursor);
+      const entries: TimelineEntry[] = await repository.timeline(
+        ctx.tenantId,
+        doctorId,
+        limit,
+        cursor,
+        timelineFilter(query.types),
+      );
       const page = entries.slice(0, limit);
-      const items = page.map(({ item, report }) =>
-        item.kind === 'visit' && report !== null ? { ...item, reportExcerpt: reportExcerpt(report) } : item,
+      const items = await enrich(
+        ctx.tenantId,
+        page.map(({ item, report }) =>
+          item.kind === 'visit' && report !== null ? { ...item, reportExcerpt: reportExcerpt(report) } : item,
+        ),
       );
 
       const last = page[page.length - 1];
@@ -231,6 +328,58 @@ export function createDoctorInteractionService(deps: DoctorInteractionServiceDep
         entityType: 'doctor_interaction',
         entityId: id,
         oldValues: auditView(current),
+      });
+    },
+
+    async createComment(ctx, doctorId, dto) {
+      await assertDoctor(ctx, doctorId);
+      const body = cleanCommentBody(dto.body);
+      const total = await comments.countForItem(ctx.tenantId, doctorId, dto.itemKind, dto.itemId);
+      if (total === null) throw notFound({ resource: dto.itemKind === 'visit' ? 'visit' : 'doctor_interaction', id: dto.itemId });
+      if (total >= DOCTOR_TIMELINE_COMMENTS_PER_ITEM_MAX) {
+        throw invalid({ body: `No máximo ${DOCTOR_TIMELINE_COMMENTS_PER_ITEM_MAX} comentários por item` });
+      }
+      const created = await comments.insert(ctx.tenantId, doctorId, dto.itemKind, dto.itemId, ctx.userId, body);
+
+      await audit.record(ctx, {
+        action: 'create_doctor_timeline_comment',
+        entityType: 'doctor_timeline_comment',
+        entityId: created.id,
+        newValues: commentAuditView(doctorId, created),
+      });
+      return created;
+    },
+
+    async updateComment(ctx, doctorId, commentId, dto) {
+      const current = await loadComment(ctx, doctorId, commentId);
+      if (!doctorTimelineCommentPermissions(current, { id: ctx.userId, role: ctx.role }).canEdit) throw notAuthor();
+      const body = cleanCommentBody(dto.body);
+      if (body === current.body) return current;
+
+      const updated = await comments.updateBody(ctx.tenantId, doctorId, commentId, body);
+      if (!updated) throw notFound({ resource: 'doctor_timeline_comment', id: commentId });
+
+      await audit.record(ctx, {
+        action: 'update_doctor_timeline_comment',
+        entityType: 'doctor_timeline_comment',
+        entityId: commentId,
+        oldValues: { body: current.body },
+        newValues: { body: updated.body },
+      });
+      return updated;
+    },
+
+    async deleteComment(ctx, doctorId, commentId) {
+      const current = await loadComment(ctx, doctorId, commentId);
+      if (!doctorTimelineCommentPermissions(current, { id: ctx.userId, role: ctx.role }).canDelete) throw notAuthor();
+      const deleted = await comments.delete(ctx.tenantId, commentId);
+      if (!deleted) throw notFound({ resource: 'doctor_timeline_comment', id: commentId });
+
+      await audit.record(ctx, {
+        action: 'delete_doctor_timeline_comment',
+        entityType: 'doctor_timeline_comment',
+        entityId: commentId,
+        oldValues: commentAuditView(doctorId, current),
       });
     },
   };

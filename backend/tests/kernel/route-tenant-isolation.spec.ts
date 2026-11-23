@@ -202,6 +202,8 @@ interface Lab {
   visitAttachment: { id: string };
   /** Registro manual (ligacao) na linha do tempo de `doctor` (CRMLAB-89, D-261). */
   doctorInteraction: { id: string };
+  /** Comentario do gestor em `visit` na linha do tempo de `doctor` (CRMLAB-192, D-332). */
+  doctorComment: { id: string };
   /** Especialidade da lista do laboratorio (CRMLAB-188, D-328). */
   doctorSpecialty: { id: string };
   /** Mídia de mensagem (Onda 8 §4). */
@@ -700,6 +702,33 @@ const LAB_ROUTES: readonly LabRoute[] = [
     name: 'DELETE /doctors/:id/interactions/:interactionId',
     method: 'delete',
     path: (l) => `/api/v1/doctors/${l.doctor.id}/interactions/${l.doctorInteraction.id}`,
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 204,
+  },
+  // --- feed do medico (CRMLAB-192, D-332): comentarios; a sonda e do gestor (autor) ---
+  {
+    name: 'POST /doctors/:id/comments',
+    method: 'post',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments`,
+    body: (l) => ({ itemKind: 'visit', itemId: l.visit.id, body: 'Sonda de isolamento' }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 201,
+  },
+  {
+    name: 'PATCH /doctors/:id/comments/:commentId',
+    method: 'patch',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments/${l.doctorComment.id}`,
+    body: () => ({ body: 'Sonda de isolamento' }),
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
+  {
+    name: 'DELETE /doctors/:id/comments/:commentId',
+    method: 'delete',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/comments/${l.doctorComment.id}`,
     actor: 'manager',
     addressable: true,
     ownStatus: 204,
@@ -1430,6 +1459,15 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     ),
   );
   const visit = { id: visitRow.rows[0]?.id as string };
+
+  const doctorCommentRow = await db.withoutTenant((tx) =>
+    tx.query<{ id: string }>(
+      `INSERT INTO doctor_timeline_comments (tenant_id, visit_id, author_id, body)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [tenant.id, visit.id, manager.id, secret ? BETA_SECRETS.visit : `Comentario ${prefix}`],
+    ),
+  );
+  const doctorComment = { id: doctorCommentRow.rows[0]?.id as string };
   const visitPurpose = { id: await visitPurposeId(tenant.id, 'Visita', db) };
 
   const checkedInRow = await db.withoutTenant((tx) =>
@@ -1538,6 +1576,7 @@ async function buildLab(prefix: string, secret: boolean): Promise<Lab> {
     checkedInVisit,
     visitAttachment,
     doctorInteraction,
+    doctorComment,
     doctorSpecialty,
     media,
     message,
@@ -1683,7 +1722,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-190/D-330 soma 3: `GET|POST /settings/visit-purposes` e
     // `PATCH /settings/visit-purposes/:id`.
     // CRMLAB-189/D-329 soma 3: `GET /doctors/portfolios`, `POST /doctors/transfer` e `GET /doctors/lookup`.
-    expect(LAB_ROUTES).toHaveLength(142);
+    // CRMLAB-192/D-332 soma 3: `POST /doctors/:id/comments` e `PATCH|DELETE /doctors/:id/comments/:commentId`.
+    expect(LAB_ROUTES).toHaveLength(145);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

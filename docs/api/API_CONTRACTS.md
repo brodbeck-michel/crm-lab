@@ -6534,7 +6534,8 @@ As 4 rotas entram no inventário de isolamento (132 → 136). Ficam registradas 
 
 Tela `/visitation/doctors/:id` (PAGES.md §22b). Shapes em `shared/types/doctor-timeline.types.ts`;
 tabela `doctor_interactions` (SCHEMA.md §38); service `DoctorInteractionService` (SERVICES.md §32).
-**Mais 4 rotas**, no inventário de isolamento (102 → 106). Desde D-329 (revoga D-261 item 8):
+**Mais 4 rotas**, no inventário de isolamento (102 → 106); o feed do CRMLAB-192 (D-332) soma as
+3 de comentário (142 → 145). Desde D-329 (revoga D-261 item 8):
 `representative`, `manager` e `admin`; atendente → `403`. O representante só alcança a linha do
 tempo e os registros de médico **da carteira dele**; fora dela → `404`.
 Médico de outro tenant, inexistente, ou registro de **outro médico** no caminho → `404 NOT_FOUND`.
@@ -6593,7 +6594,78 @@ Médico de outro tenant, inexistente, ou registro de **outro médico** no caminh
   cortado em 280 caracteres com `…`. `null` sem relato. A visita inteira abre em `GET /visits/:id`.
 - `nextCursor: null` = acabou. O cursor é opaco; mexido → `VALIDATION_ERROR`.
 
-**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400 — `limit` fora de 1..50, cursor inválido)
+**Feed (CRMLAB-192, D-332)** — campos novos, todos sempre presentes:
+- `?types=visita,ligacao` — filtro por tipo: um ou mais de `visita` · `ligacao` · `email` ·
+  `whatsapp`, separados por vírgula (`DOCTOR_TIMELINE_FILTERS`). Ausente = tudo. Valor fora da lista
+  → `VALIDATION_ERROR` (`fields.types`). Aplicado no SQL antes do cursor; o cursor de uma página só
+  vale com o mesmo filtro.
+- Na visita: `report` (`{ presented, doctorFeedback, objections }`, o `VisitReport` inteiro),
+  `nextVisitDate` (`'YYYY-MM-DD'` ou `null`) e `attachments` (`VisitAttachment[]`, mais antigo
+  primeiro — baixa por `GET /visits/:visitId/attachments/:attachmentId`).
+- Em todo item (visita e registro): `comments` (`DoctorTimelineComment[]`, mais antigo primeiro;
+  no máximo 100 por item).
+
+```json
+{
+  "kind": "visit",
+  "id": "a3e1…",
+  "...": "campos acima",
+  "report": { "presented": "Painel de tireoide", "doctorFeedback": "Gostou", "objections": null },
+  "nextVisitDate": "2026-11-03",
+  "attachments": [
+    { "id": "c71e…", "fileName": "folder.jpg", "mimeType": "image/jpeg", "byteSize": 182340,
+      "uploadedBy": { "id": "7c3d…", "name": "Ana Lima" }, "createdAt": "2026-10-06T14:00:00.000Z" }
+  ],
+  "comments": [
+    { "id": "9d2a…", "itemKind": "visit", "itemId": "a3e1…", "body": "Manda o material na sexta",
+      "author": { "id": "2b4f…", "name": "Gestora Bia" },
+      "createdAt": "2026-10-06T15:00:00.000Z", "updatedAt": "2026-10-06T15:00:00.000Z", "editedAt": null }
+  ]
+}
+```
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400 — `limit` fora de 1..50, cursor inválido,
+`types` inválido)
+
+#### POST /doctors/:id/comments (CRMLAB-192, D-332)
+
+Comenta um item da linha do tempo do médico. Mesmos perfis e escopo da linha do tempo
+(representante só na carteira dele → `404` fora; atendente → `403`).
+
+**Request:**
+```json
+{ "itemKind": "visit", "itemId": "a3e1…", "body": "Manda o material na sexta" }
+```
+- `itemKind`: `visit` · `interaction`; `itemId` uuid do item. Item inexistente, de outro tenant ou
+  de **outro médico** → `404 NOT_FOUND`.
+- `body` aparado, 1..2000 (`fields.body`). Campo a mais → `VALIDATION_ERROR` (schema estrito).
+- Item com 100 comentários → `VALIDATION_ERROR` (`fields.body`).
+- Vale em visita de qualquer status e em médico inativo.
+
+**Response (201):** o `DoctorTimelineComment`, cru. Audit `create_doctor_timeline_comment`
+(`entityType: "doctor_timeline_comment"`, `newValues: { doctorId, itemKind, itemId, body }`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403 — perfil)
+
+#### PATCH /doctors/:id/comments/:commentId
+
+**Request:** `{ "body": "texto novo" }` (obrigatório, mesmas regras do `POST`). **Só o autor**;
+outro usuário que vê o comentário → `403 FORBIDDEN` (`details.reason: "not_author"`). Comentário de
+outro médico, outro tenant ou fora do escopo → `404`. Grava `editedAt`.
+**Response (200):** o `DoctorTimelineComment` atualizado. Texto igual → 200 sem audit e sem
+`editedAt` novo; senão audit `update_doctor_timeline_comment` (`oldValues.body` → `newValues.body`).
+
+**Erros:** `NOT_FOUND` (404), `VALIDATION_ERROR` (400), `FORBIDDEN` (403)
+
+#### DELETE /doctors/:id/comments/:commentId
+
+**O autor ou um admin** (o gestor não exclui comentário de colega); outro → `403 FORBIDDEN`
+(`details.reason: "not_author"`). Apaga a linha. **Response (204).** Audit
+`delete_doctor_timeline_comment` com `oldValues` (texto apagado). Repetir → `404`.
+
+**Erros:** `NOT_FOUND` (404), `FORBIDDEN` (403)
+
+**Editar o relato pela ficha** usa `PATCH /visits/:id/report` (§14), sem rota nova.
 
 #### POST /doctors/:id/interactions
 

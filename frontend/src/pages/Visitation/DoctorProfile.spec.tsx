@@ -13,6 +13,8 @@ import type {
 import { ApiError } from '@/api/client';
 import { conversationsApi } from '@/api/conversations';
 import { doctorsApi } from '@/api/doctors';
+import { visitsApi } from '@/api/visits';
+import { useAuthStore } from '@/stores/auth.store';
 import { ToastProvider } from '@/components/ui';
 import DoctorProfile from './DoctorProfile';
 import { buildDoctor } from '@/test/doctor-fixtures';
@@ -34,9 +36,16 @@ vi.mock('@/api/doctors', () => ({
     createInteraction: vi.fn(),
     updateInteraction: vi.fn(),
     deleteInteraction: vi.fn(),
+    createComment: vi.fn(),
+    updateComment: vi.fn(),
+    deleteComment: vi.fn(),
     specialties: vi.fn(),
     createSpecialty: vi.fn(),
   },
+}));
+
+vi.mock('@/api/visits', () => ({
+  visitsApi: { updateReport: vi.fn(), downloadAttachment: vi.fn() },
 }));
 
 vi.mock('@/api/conversations', () => ({
@@ -50,6 +59,11 @@ const updateInteractionMock = vi.mocked(doctorsApi.updateInteraction);
 const deleteInteractionMock = vi.mocked(doctorsApi.deleteInteraction);
 const assigneesMock = vi.mocked(conversationsApi.assignees);
 const specialtiesMock = vi.mocked(doctorsApi.specialties);
+const createCommentMock = vi.mocked(doctorsApi.createComment);
+const updateCommentMock = vi.mocked(doctorsApi.updateComment);
+const deleteCommentMock = vi.mocked(doctorsApi.deleteComment);
+const updateReportMock = vi.mocked(visitsApi.updateReport);
+const downloadAttachmentMock = vi.mocked(visitsApi.downloadAttachment);
 
 const julia: Doctor = buildDoctor({
   id: 'doc-1',
@@ -85,6 +99,27 @@ const visita: DoctorTimelineVisit = {
   statusReason: null,
   reportExcerpt: 'Apresentei o painel de tireoide',
   attachmentCount: 2,
+  report: { presented: 'Apresentei o painel de tireoide', doctorFeedback: 'Gostou do prazo', objections: null },
+  nextVisitDate: null,
+  attachments: [
+    {
+      id: 'att-img',
+      fileName: 'folder.jpg',
+      mimeType: 'image/jpeg',
+      byteSize: 1200,
+      uploadedBy: { id: 'u-bia', name: 'Bia Atendente' },
+      createdAt: '2026-09-10T14:00:00.000Z',
+    },
+    {
+      id: 'att-pdf',
+      fileName: 'tabela.pdf',
+      mimeType: 'application/pdf',
+      byteSize: 5400,
+      uploadedBy: { id: 'u-bia', name: 'Bia Atendente' },
+      createdAt: '2026-09-10T14:05:00.000Z',
+    },
+  ],
+  comments: [],
 };
 
 const ligacao: DoctorTimelineInteraction = {
@@ -98,7 +133,31 @@ const ligacao: DoctorTimelineInteraction = {
   updatedBy: null,
   createdAt: '2026-09-12T18:05:00.000Z',
   updatedAt: '2026-09-12T18:05:00.000Z',
+  comments: [],
 };
+
+function commentOf(id: string, author: { id: string; name: string }, body: string, editedAt: string | null = null) {
+  return {
+    id,
+    itemKind: 'visit' as const,
+    itemId: 'visit-1',
+    body,
+    author,
+    createdAt: '2026-09-11T10:00:00.000Z',
+    updatedAt: editedAt ?? '2026-09-11T10:00:00.000Z',
+    editedAt,
+  };
+}
+
+function loginAs(id: string, role: 'representative' | 'manager' | 'admin') {
+  useAuthStore.setState({
+    user: { id, email: `${id}@lab.test`, name: id, role, discountLimit: 15 },
+  });
+}
+
+function hhmm(iso: string): string {
+  return new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
 
 function page(items: DoctorTimelineResponse['items'], nextCursor: string | null = null): DoctorTimelineResponse {
   return { items, nextCursor };
@@ -121,6 +180,11 @@ function renderPage(path = '/visitation/doctors/doc-1') {
   );
 }
 
+/** Itens do feed (filhos diretos da lista: anexos e comentários também são `li`). */
+function feedItems(): HTMLElement[] {
+  return Array.from(screen.getByTestId('doctor-timeline').children) as HTMLElement[];
+}
+
 function timeline() {
   return within(screen.getByTestId('doctor-timeline'));
 }
@@ -132,6 +196,8 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     timelineMock.mockResolvedValue(page([ligacao, visita]));
     assigneesMock.mockResolvedValue({ assignees: [{ id: 'u-ana', name: 'Ana Gestora', role: 'manager' }] });
     specialtiesMock.mockResolvedValue({ specialties: [] });
+    downloadAttachmentMock.mockRejectedValue(new Error('sem rede no teste'));
+    loginAs('u-bia', 'representative');
   });
 
   afterEach(() => {
@@ -156,7 +222,7 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     await waitFor(() => expect(screen.getByTestId('doctor-timeline')).toBeInTheDocument());
     expect(timelineMock).toHaveBeenCalledWith('doc-1', { limit: 20 });
 
-    const itens = timeline().getAllByRole('listitem');
+    const itens = feedItems();
     expect(itens).toHaveLength(2);
     expect(within(itens[0] as HTMLElement).getByText('Ligação')).toBeInTheDocument();
     expect(within(itens[0] as HTMLElement).getByText('Confirmou interesse no convênio')).toBeInTheDocument();
@@ -165,8 +231,20 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     const visitaItem = within(itens[1] as HTMLElement);
     expect(visitaItem.getByText('Visita')).toBeInTheDocument();
     expect(visitaItem.getByText('Realizada')).toBeInTheDocument();
-    expect(visitaItem.getByText('Presencial · com Bia Atendente · 35 min · 2 anexos')).toBeInTheDocument();
+    expect(visitaItem.getByText('Bia Atendente')).toBeInTheDocument();
+    expect(visitaItem.getByText('· Presencial')).toBeInTheDocument();
+    expect(visitaItem.getByTestId('visit-check-line')).toHaveTextContent(
+      `Check-in às ${hhmm('2026-09-10T13:20:00.000Z')} de 10/09 · Check-out às ${hhmm('2026-09-10T13:55:00.000Z')} de 10/09 · 35 min`,
+    );
+    // Relato completo com rótulos; campo vazio (objeções) não aparece.
+    expect(visitaItem.getByText('O que foi apresentado')).toBeInTheDocument();
     expect(visitaItem.getByText('Apresentei o painel de tireoide')).toBeInTheDocument();
+    expect(visitaItem.getByText('Feedback do médico')).toBeInTheDocument();
+    expect(visitaItem.getByText('Gostou do prazo')).toBeInTheDocument();
+    expect(visitaItem.queryByText('Objeções')).not.toBeInTheDocument();
+    // Anexos: imagem (miniatura; sem download no teste cai no ícone) e PDF com nome.
+    expect(visitaItem.getByRole('button', { name: 'Abrir folder.jpg' })).toBeInTheDocument();
+    expect(visitaItem.getByRole('button', { name: 'Abrir tabela.pdf' })).toHaveTextContent('tabela.pdf');
     expect(visitaItem.getByRole('link', { name: 'Abrir visita' })).toHaveAttribute(
       'href',
       '/visitation/agenda?visit=visit-1',
@@ -291,6 +369,144 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     expect(await screen.findByText('Médico não encontrado')).toBeInTheDocument();
     expect(timelineMock).not.toHaveBeenCalled();
   });
+
+  // --- CRMLAB-192 (D-332): feed ---
+
+  it('relato longo aparece cortado com "Ver mais", que expande e recolhe', async () => {
+    const longo = Array.from({ length: 6 }, (_, i) => `Linha ${i + 1} do relato`).join('\n');
+    timelineMock.mockResolvedValue(page([{ ...visita, report: { presented: longo, doctorFeedback: null, objections: null } }]));
+    const user = userEvent.setup();
+    renderPage();
+
+    const verMais = await screen.findByRole('button', { name: 'Ver mais' });
+    const campo = screen.getByText(/Linha 1 do relato/);
+    expect(campo).toHaveClass('line-clamp-4');
+    await user.click(verMais);
+    expect(campo).not.toHaveClass('line-clamp-4');
+    await user.click(screen.getByRole('button', { name: 'Ver menos' }));
+    expect(campo).toHaveClass('line-clamp-4');
+  });
+
+  it('relato curto não tem "Ver mais"', async () => {
+    renderPage();
+    await screen.findByTestId('doctor-timeline');
+    expect(screen.queryByRole('button', { name: 'Ver mais' })).not.toBeInTheDocument();
+  });
+
+  it('filtro por tipo pede ao servidor só aquele tipo', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('doctor-timeline');
+    expect(screen.getByRole('radio', { name: 'Tudo' })).toHaveAttribute('aria-checked', 'true');
+
+    timelineMock.mockResolvedValue(page([visita]));
+    await user.click(screen.getByRole('radio', { name: 'Visitas' }));
+    await waitFor(() => expect(timelineMock).toHaveBeenLastCalledWith('doc-1', { limit: 20, types: ['visita'] }));
+    expect(screen.getByRole('radio', { name: 'Visitas' })).toHaveAttribute('aria-checked', 'true');
+
+    timelineMock.mockResolvedValue(page([]));
+    await user.click(screen.getByRole('radio', { name: 'WhatsApp' }));
+    await waitFor(() => expect(timelineMock).toHaveBeenLastCalledWith('doc-1', { limit: 20, types: ['whatsapp'] }));
+    expect(await screen.findByText('Nada deste tipo')).toBeInTheDocument();
+
+    for (const label of ['Ligações', 'E-mail']) expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
+  });
+
+  it('edita o relato pela ficha mandando só o que mudou', async () => {
+    updateReportMock.mockResolvedValue({ id: 'visit-1' } as Awaited<ReturnType<typeof visitsApi.updateReport>>);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Editar relato' }));
+    const editor = within(screen.getByTestId('visit-report-editor'));
+    expect(editor.getByLabelText('O que foi apresentado')).toHaveValue('Apresentei o painel de tireoide');
+    await user.type(editor.getByLabelText('Objeções'), '  Preço alto ');
+    await user.click(editor.getByRole('button', { name: 'Salvar relato' }));
+
+    await waitFor(() => expect(updateReportMock).toHaveBeenCalledWith('visit-1', { objections: 'Preço alto' }));
+    await waitFor(() => expect(screen.queryByTestId('visit-report-editor')).not.toBeInTheDocument());
+  });
+
+  it('visita cancelada não oferece editar relato', async () => {
+    timelineMock.mockResolvedValue(page([{ ...visita, status: 'cancelada', statusReason: 'Férias' }]));
+    renderPage();
+    await screen.findByText('Motivo: Férias');
+    expect(screen.queryByRole('button', { name: 'Editar relato' })).not.toBeInTheDocument();
+  });
+
+  it('comenta num item da linha do tempo', async () => {
+    createCommentMock.mockResolvedValue(commentOf('c-new', { id: 'u-bia', name: 'Bia Atendente' }, 'Ligou de novo?'));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByTestId('doctor-timeline');
+
+    const itens = feedItems();
+    const ligacaoItem = within(itens[0] as HTMLElement);
+    expect(ligacaoItem.getByRole('button', { name: 'Comentar' })).toBeDisabled();
+    await user.type(ligacaoItem.getByLabelText('Escreva um comentário'), '  Ligou de novo?  ');
+    await user.click(ligacaoItem.getByRole('button', { name: 'Comentar' }));
+
+    await waitFor(() =>
+      expect(createCommentMock).toHaveBeenCalledWith('doc-1', { itemKind: 'interaction', itemId: 'int-1', body: 'Ligou de novo?' }),
+    );
+  });
+
+  it('só o autor edita o comentário; mostra "(editado)"', async () => {
+    updateCommentMock.mockResolvedValue(commentOf('c-1', { id: 'u-bia', name: 'Bia Atendente' }, 'Texto corrigido'));
+    timelineMock.mockResolvedValue(
+      page([
+        {
+          ...visita,
+          comments: [
+            commentOf('c-1', { id: 'u-bia', name: 'Bia Atendente' }, 'Manda o material'),
+            commentOf('c-2', { id: 'u-ana', name: 'Ana Gestora' }, 'Combinado', '2026-09-11T11:00:00.000Z'),
+          ],
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Manda o material');
+    expect(screen.getByText(/\(editado\)/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Editar comentário de Ana Gestora' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Excluir comentário de Ana Gestora' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Editar comentário de Bia Atendente' }));
+    const campo = screen.getByLabelText('Editar comentário');
+    await user.clear(campo);
+    await user.type(campo, 'Texto corrigido');
+    await user.click(screen.getByRole('button', { name: 'Salvar' }));
+
+    await waitFor(() => expect(updateCommentMock).toHaveBeenCalledWith('doc-1', 'c-1', { body: 'Texto corrigido' }));
+  });
+
+  it('exclui o próprio comentário depois de confirmar; o admin exclui de colega, o gestor não', async () => {
+    deleteCommentMock.mockResolvedValue(undefined);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    timelineMock.mockResolvedValue(
+      page([{ ...visita, comments: [commentOf('c-1', { id: 'u-bia', name: 'Bia Atendente' }, 'Manda o material')] }]),
+    );
+    const user = userEvent.setup();
+    const { unmount } = renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Excluir comentário de Bia Atendente' }));
+    await waitFor(() => expect(deleteCommentMock).toHaveBeenCalledWith('doc-1', 'c-1'));
+    unmount();
+
+    loginAs('u-ana', 'manager');
+    const gestor = renderPage();
+    await screen.findByText('Manda o material');
+    expect(screen.queryByRole('button', { name: 'Excluir comentário de Bia Atendente' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Editar comentário de Bia Atendente' })).not.toBeInTheDocument();
+    gestor.unmount();
+
+    loginAs('u-davi', 'admin');
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Excluir comentário de Bia Atendente' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Editar comentário de Bia Atendente' })).not.toBeInTheDocument();
+  });
+
 
   // --- CRMLAB-188 (D-328): ficha em seções ---
 

@@ -2032,6 +2032,21 @@ Lê `doctors` (pelo `DoctorRepository`), `doctor_visits`, `doctor_visit_attachme
 `users` (nomes) — leitura de apoio, sem escrever em tabela de outro domínio. As rotas moram no
 mesmo `doctorModule` (`doctor.routes.ts`).
 
+**Feed (CRMLAB-192, D-332):** o mesmo service passa a ser dono de `doctor_timeline_comments`
+(SCHEMA §38a, `DoctorTimelineCommentRepository`). `timeline` aceita `types` (filtro no SQL: visitas
+entram se `visita` estiver na lista; registros manuais por `type = ANY(...)`) e devolve a visita com
+`report`, `nextVisitDate` e `attachments` (uma consulta para os anexos da página) e todo item com
+`comments` (uma consulta para os comentários da página). Comentar: `assertDoctor` (escopo D-329) +
+item do **mesmo médico** (senão `NOT_FOUND`) + teto de 100 por item. Editar só o autor; excluir o
+autor ou `admin`; senão `FORBIDDEN` (`reason: "not_author"`). Audit
+`create_/update_/delete_doctor_timeline_comment` (`entityType: "doctor_timeline_comment"`).
+
+```typescript
+  createComment(ctx: TenantContext, doctorId: string, dto: CreateDoctorTimelineCommentRequest): Promise<DoctorTimelineComment>;
+  updateComment(ctx: TenantContext, doctorId: string, commentId: string, dto: UpdateDoctorTimelineCommentRequest): Promise<DoctorTimelineComment>;
+  deleteComment(ctx: TenantContext, doctorId: string, commentId: string): Promise<void>;
+```
+
 ---
 
 ## 33. AutoReplyService — fora do horário e boas-vindas (CRMLAB-94 — D-264)

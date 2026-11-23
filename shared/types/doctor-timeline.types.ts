@@ -9,7 +9,8 @@
  * não existe ligação conversa ↔ médico (resposta 8 do épico).
  */
 import type { IsoDateTime } from './api.types.js';
-import type { VisitPerson, VisitStatus, VisitType } from './visit.types.js';
+import type { UserRole } from './auth.types.js';
+import type { VisitAttachment, VisitPerson, VisitReport, VisitStatus, VisitType } from './visit.types.js';
 import type { VisitPurposeRef } from './visit-purpose.types.js';
 
 /** Como o contato aconteceu (registro manual). */
@@ -41,6 +42,71 @@ export const DOCTOR_TIMELINE_MAX_LIMIT = 50;
 
 /** Tamanho máximo do trecho do relato mostrado na linha do tempo. */
 export const DOCTOR_TIMELINE_EXCERPT_MAX_LENGTH = 280;
+
+/**
+ * Filtro do feed por tipo (CRMLAB-192, D-332): `visita` + os tipos de registro
+ * manual. Vai no fio como `?types=visita,ligacao` (separado por vírgula).
+ */
+export const DOCTOR_TIMELINE_FILTERS = ['visita', ...DOCTOR_INTERACTION_TYPES] as const;
+export type DoctorTimelineFilter = (typeof DOCTOR_TIMELINE_FILTERS)[number];
+
+export const DOCTOR_TIMELINE_FILTER_LABELS: Record<DoctorTimelineFilter, string> = {
+  visita: 'Visitas',
+  ligacao: 'Ligações',
+  whatsapp: 'WhatsApp',
+  email: 'E-mail',
+};
+
+export function isDoctorTimelineFilter(value: string): value is DoctorTimelineFilter {
+  return (DOCTOR_TIMELINE_FILTERS as readonly string[]).includes(value);
+}
+
+/** Comentários (CRMLAB-192, D-332). */
+export const DOCTOR_TIMELINE_COMMENT_MAX_LENGTH = 2000;
+/** Teto por item: os comentários vêm embutidos no item da página. */
+export const DOCTOR_TIMELINE_COMMENTS_PER_ITEM_MAX = 100;
+
+/** Espécie do item comentado — o mesmo `kind` do item da linha do tempo. */
+export const DOCTOR_TIMELINE_ITEM_KINDS = ['visit', 'interaction'] as const;
+export type DoctorTimelineItemKind = (typeof DOCTOR_TIMELINE_ITEM_KINDS)[number];
+
+/** Comentário num item da linha do tempo (visita ou registro manual). */
+export interface DoctorTimelineComment {
+  id: string;
+  itemKind: DoctorTimelineItemKind;
+  itemId: string;
+  body: string;
+  /** `null` só se o usuário foi apagado. */
+  author: VisitPerson | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+  /** Última edição do texto. `null` = nunca editado. */
+  editedAt: IsoDateTime | null;
+}
+
+/** `POST /doctors/:id/comments`. */
+export interface CreateDoctorTimelineCommentRequest {
+  itemKind: DoctorTimelineItemKind;
+  itemId: string;
+  body: string;
+}
+
+/** `PATCH /doctors/:id/comments/:commentId`. */
+export interface UpdateDoctorTimelineCommentRequest {
+  body: string;
+}
+
+/**
+ * Quem mexe no comentário (D-332 item 5): só o autor edita; o autor e o admin
+ * excluem. Mesma regra no backend (que recusa) e na tela (que esconde).
+ */
+export function doctorTimelineCommentPermissions(
+  comment: Pick<DoctorTimelineComment, 'author'>,
+  user: { id: string; role: UserRole },
+): { canEdit: boolean; canDelete: boolean } {
+  const isAuthor = comment.author !== null && comment.author.id === user.id;
+  return { canEdit: isAuthor, canDelete: isAuthor || user.role === 'admin' };
+}
 
 /** Registro de interação lançado à mão na ficha do médico. */
 export interface DoctorInteraction {
@@ -82,10 +148,20 @@ export interface DoctorTimelineVisit {
    */
   reportExcerpt: string | null;
   attachmentCount: number;
+  /** Relato inteiro (CRMLAB-192, D-332). */
+  report: VisitReport;
+  /** Data de retorno `'YYYY-MM-DD'`. */
+  nextVisitDate: string | null;
+  /** Mais antigo primeiro. Baixa por `GET /visits/:id/attachments/:attachmentId`. */
+  attachments: VisitAttachment[];
+  /** Mais antigo primeiro (D-332). */
+  comments: DoctorTimelineComment[];
 }
 
 export interface DoctorTimelineInteraction extends DoctorInteraction {
   kind: 'interaction';
+  /** Mais antigo primeiro (D-332). */
+  comments: DoctorTimelineComment[];
 }
 
 export type DoctorTimelineItem = DoctorTimelineVisit | DoctorTimelineInteraction;
@@ -97,6 +173,8 @@ export type DoctorTimelineItem = DoctorTimelineVisit | DoctorTimelineInteraction
 export interface DoctorTimelineQuery {
   limit?: number;
   cursor?: string;
+  /** Filtro por tipo (D-332). Ausente/vazio = tudo. No fio: separado por vírgula. */
+  types?: DoctorTimelineFilter[];
 }
 
 export interface DoctorTimelineResponse {

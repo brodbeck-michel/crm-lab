@@ -1,5 +1,8 @@
 import type {
   CreateDoctorInteractionRequest,
+  CreateDoctorTimelineCommentRequest,
+  DoctorTimelineComment,
+  UpdateDoctorTimelineCommentRequest,
   CreateDoctorRequest,
   CreateDoctorSpecialtyRequest,
   Doctor,
@@ -52,8 +55,22 @@ export const doctorsApi = {
   transfer: (body: TransferDoctorsRequest) => http.post<TransferDoctorsResponse>('/doctors/transfer', body),
 
   // Linha do tempo do médico (CRMLAB-89, D-261).
-  timeline: (id: string, query: DoctorTimelineQuery = {}) =>
-    http.get<DoctorTimelineResponse>(`/doctors/${id}/timeline`, query as QueryParams),
+  // `types` vai separado por vírgula (`?types=visita,ligacao`, CRMLAB-192/D-332).
+  timeline: (id: string, query: DoctorTimelineQuery = {}) => {
+    const { types, ...rest } = query;
+    const params: QueryParams = { ...rest };
+    if (types && types.length > 0) params.types = types.join(',');
+    return http.get<DoctorTimelineResponse>(`/doctors/${id}/timeline`, params);
+  },
+
+  // Comentários do feed (CRMLAB-192, D-332).
+  createComment: (id: string, body: CreateDoctorTimelineCommentRequest) =>
+    http.post<DoctorTimelineComment>(`/doctors/${id}/comments`, body),
+
+  updateComment: (id: string, commentId: string, body: UpdateDoctorTimelineCommentRequest) =>
+    http.patch<DoctorTimelineComment>(`/doctors/${id}/comments/${commentId}`, body),
+
+  deleteComment: (id: string, commentId: string) => http.delete<void>(`/doctors/${id}/comments/${commentId}`),
 
   createInteraction: (id: string, body: CreateDoctorInteractionRequest) =>
     http.post<DoctorInteraction>(`/doctors/${id}/interactions`, body),

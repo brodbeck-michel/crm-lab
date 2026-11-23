@@ -985,6 +985,22 @@ interações com ele, com autor e data.
 - **Auditoria:** `create_doctor_interaction`, `update_doctor_interaction` (só o que mudou),
   `delete_doctor_interaction` — `entityType: "doctor_interaction"` (resposta 9).
 
+### Feed do médico (CRMLAB-192, D-332)
+- **Visita completa na ficha:** responsável, data/hora, finalidade e modo, status, o **relato inteiro**
+  com rótulos (apresentado, feedback, objeções; cada campo cortado em 4 linhas com "Ver mais"),
+  check-in e check-out com hora e a duração (sem GPS) e os anexos (miniatura de imagem, ícone de
+  PDF), que abrem pelo download de sempre.
+- **Editar o relato pela ficha:** quem pode editar o relato da visita hoje (visita `agendada` ou
+  `realizada`, dentro do escopo D-329) edita os três textos sem ir à Agenda. Mesmo endpoint, mesmo
+  audit `update_visit_report`.
+- **Comentários** em qualquer item (visita ou registro manual): quem alcança a ficha lê e comenta
+  (representante só na carteira dele; gestor e admin em todos). Texto obrigatório, até 2000
+  caracteres; no máximo 100 por item. **Só o autor edita** (aparece "editado"); **o autor e o admin
+  excluem** — o gestor não exclui comentário de colega. Excluir apaga de verdade (texto no audit);
+  excluir um registro manual leva os comentários dele. Audit `create_/update_/delete_doctor_timeline_comment`.
+- **Filtro por tipo:** Tudo, Visitas, Ligações, WhatsApp ou E-mail. O filtro é do servidor: a lista
+  filtrada continua carregando mais sem pular item.
+
 ---
 
 ## 16. Participantes da conversa (CRMLAB-93, D-263)

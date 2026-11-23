@@ -15,6 +15,12 @@
  *   PATCH  /api/v1/doctors/:id/interactions/:interactionId      edita (parcial)
  *   DELETE /api/v1/doctors/:id/interactions/:interactionId      exclui
  *
+ * Feed do medico (CRMLAB-192, D-332):
+ *
+ *   POST   /api/v1/doctors/:id/comments                 comenta um item (visita ou registro)
+ *   PATCH  /api/v1/doctors/:id/comments/:commentId      edita (so o autor)
+ *   DELETE /api/v1/doctors/:id/comments/:commentId      exclui (autor ou admin)
+ *
  * Cadastro ampliado (CRMLAB-188, D-328):
  *
  *   GET   /api/v1/doctors/specialties        lista do laboratorio (perfis da Visitacao)
@@ -40,6 +46,13 @@ import {
   DOCTOR_ABC_CLASSES,
   DOCTOR_INTERACTION_DESCRIPTION_MAX_LENGTH,
   DOCTOR_INTERACTION_TYPES,
+  DOCTOR_TIMELINE_COMMENT_MAX_LENGTH,
+  DOCTOR_TIMELINE_ITEM_KINDS,
+  isDoctorTimelineFilter,
+  type CreateDoctorTimelineCommentRequest,
+  type DoctorTimelineComment,
+  type DoctorTimelineFilter,
+  type UpdateDoctorTimelineCommentRequest,
   DOCTOR_SPECIALTY_NAME_MAX_LENGTH,
   DOCTOR_TIMELINE_MAX_LIMIT,
   DOCTOR_VISIT_HOURS_MAX,
@@ -230,6 +243,27 @@ export const doctorTimelineQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(DOCTOR_TIMELINE_MAX_LIMIT).optional(),
   // Opaco (base64url); o service decodifica e recusa o que nao reconhece.
   cursor: z.string().min(1).max(200).optional(),
+  // Filtro por tipo (D-332): `visita,ligacao` — vazio vale como ausente.
+  types: z
+    .string()
+    .max(100)
+    .optional()
+    .transform((value, ctx): DoctorTimelineFilter[] | undefined => {
+      const parts = (value ?? '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0);
+      if (parts.length === 0) return undefined;
+      const valid: DoctorTimelineFilter[] = [];
+      for (const part of parts) {
+        if (!isDoctorTimelineFilter(part)) {
+          ctx.addIssue({ code: 'custom', message: 'Tipo inválido' });
+          return z.NEVER;
+        }
+        if (!valid.includes(part)) valid.push(part);
+      }
+      return valid;
+    }),
 });
 
 /** A regra de "nao no futuro" e o trim da descricao sao do service. */
@@ -247,6 +281,19 @@ export const doctorInteractionParamsSchema = z.object({
   id: z.uuid(),
   interactionId: z.uuid(),
 });
+
+// --- comentarios do feed (CRMLAB-192, D-332) ---
+
+/** Folga para espaco em volta: o service corta e confere o teto de novo. */
+const commentBody = z.string().max(DOCTOR_TIMELINE_COMMENT_MAX_LENGTH + 100);
+
+export const createDoctorTimelineCommentSchema = z
+  .object({ itemKind: z.enum(DOCTOR_TIMELINE_ITEM_KINDS), itemId: z.uuid(), body: commentBody })
+  .strict();
+
+export const updateDoctorTimelineCommentSchema = z.object({ body: commentBody }).strict();
+
+export const doctorCommentParamsSchema = z.object({ id: z.uuid(), commentId: z.uuid() });
 
 
 /** Monta service a partir das dependencias do kernel. */
@@ -373,6 +420,32 @@ export function deleteDoctorInteraction(service: DoctorInteractionService): Requ
   });
 }
 
+export function createDoctorTimelineComment(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const dto = validated<CreateDoctorTimelineCommentRequest>(req, 'body');
+    const body: DoctorTimelineComment = await service.createComment(getContext(req), id, dto);
+    res.status(201).json(body);
+  });
+}
+
+export function updateDoctorTimelineComment(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id, commentId } = validated<{ id: string; commentId: string }>(req, 'params');
+    const dto = validated<UpdateDoctorTimelineCommentRequest>(req, 'body');
+    const body: DoctorTimelineComment = await service.updateComment(getContext(req), id, commentId, dto);
+    res.status(200).json(body);
+  });
+}
+
+export function deleteDoctorTimelineComment(service: DoctorInteractionService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id, commentId } = validated<{ id: string; commentId: string }>(req, 'params');
+    await service.deleteComment(getContext(req), id, commentId);
+    res.status(204).end();
+  });
+}
+
 export function listDoctorSpecialties(service: DoctorSpecialtyService): RequestHandler {
   return handle(async (req, res) => {
     const query = validated<ListDoctorSpecialtiesQuery>(req, 'query');
@@ -482,6 +555,24 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
     updateDoctorInteraction(interactions),
   );
   router.delete('/:id/interactions/:interactionId', ...guards, interactionParams, deleteDoctorInteraction(interactions));
+
+  // Comentarios do feed (CRMLAB-192, D-332): mesmos guardas e escopo da linha do tempo.
+  const commentParams = validate(doctorCommentParamsSchema, 'params');
+  router.post(
+    '/:id/comments',
+    ...guards,
+    idParam,
+    validate(createDoctorTimelineCommentSchema, 'body'),
+    createDoctorTimelineComment(interactions),
+  );
+  router.patch(
+    '/:id/comments/:commentId',
+    ...guards,
+    commentParams,
+    validate(updateDoctorTimelineCommentSchema, 'body'),
+    updateDoctorTimelineComment(interactions),
+  );
+  router.delete('/:id/comments/:commentId', ...guards, commentParams, deleteDoctorTimelineComment(interactions));
 
   return { basePath: '/doctors', router, requiresAuth: true };
 }

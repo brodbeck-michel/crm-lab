@@ -226,6 +226,8 @@ export const queryKeys = {
   doctor: (id: string) => ['doctors', 'detail', id] as const,
   /** ['doctors', 'timeline', id] — linha do tempo da ficha (CRMLAB-89, D-261) */
   doctorTimeline: (id: string) => ['doctors', 'timeline', id] as const,
+  /** Uma lista filtrada do feed (CRMLAB-192); `doctorTimeline(id)` é o prefixo de todas. */
+  doctorTimelineFiltered: (id: string, filter: string) => ['doctors', 'timeline', id, filter] as const,
   /** ['doctors', 'specialties', active] — lista de especialidades (CRMLAB-188, D-328) */
   doctorSpecialties: (active?: boolean) => ['doctors', 'specialties', active ?? 'all'] as const,
   /** ['doctors', 'picker', term] — busca do médico no formulário da proposta (CRMLAB-188) */

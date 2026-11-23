@@ -1881,6 +1881,21 @@ VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors
   horário), **Parceria**, **Endereço** (estruturado; sem ele, o texto antigo) e **Secretária** (com
   link WhatsApp). Selo ABC no topo, com o mesmo tooltip da lista. Seção sem nenhum dado mostra
   "Não informado".
+- **CRMLAB-192 (D-332) — a linha do tempo vira feed** (itens em `pages/Visitation/DoctorFeed.tsx`):
+  - **Filtro** acima da lista: chips de escolha única **Tudo · Visitas · Ligações · WhatsApp ·
+    E-mail** (`role="radio"`); trocar recomeça a lista com `?types=`.
+  - **Visita:** `PersonAvatar` + nome do responsável, data/hora, finalidade (`PurposeDot` + nome) ·
+    modo, `StatusBadge` (selo da Agenda). Linha "Check-in às 13:20 de 06/10 · Check-out às 13:55 de
+    06/10 · 35 min" (só o que houver). **Relato** com rótulos "O que foi apresentado", "Feedback do
+    médico", "Objeções" (campo vazio não aparece; cada campo `line-clamp-4`) e [Ver mais]/[Ver menos]
+    quando algum passa de 4 linhas. Anexos: imagem em **miniatura** 64×64 (baixada pelo download
+    autenticado) e PDF com ícone + nome; clicar abre como no modal da visita (PDF em nova aba,
+    imagem baixa). [Editar relato] (só `agendada`/`realizada`) troca o relato por três `TextArea` +
+    [Cancelar] [Salvar relato] (`PATCH /visits/:id/report`, só o que mudou). [Abrir visita] continua.
+  - **Comentários** embaixo de cada item (visita e registro): lista "Nome · data · (editado)" + texto;
+    [Editar] só no próprio, [Excluir] no próprio ou para o admin (`window.confirm`). Campo
+    "Escreva um comentário" (até 2000) + [Comentar]. Editar troca o texto por `TextArea` + [Salvar]
+    [Cancelar].
 
 #### Formulário de proposta — médico do cadastro (CRMLAB-188, D-328)
 Em Novo orçamento (`SummaryColumn`) e na edição da proposta (`ProposalModal`), o campo "Médico

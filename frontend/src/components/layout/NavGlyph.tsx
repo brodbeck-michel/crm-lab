@@ -26,6 +26,7 @@ import {
   Stethoscope,
   CalendarDays,
   Briefcase,
+  Camera,
   type LucideIcon,
 } from 'lucide-react';
 import type { NavIcon } from '@/routes/route-config';
@@ -63,6 +64,7 @@ const ICONS: Record<NavIcon, LucideIcon> = {
   agenda: CalendarDays,
   portfolios: Briefcase,
   'visit-report': FileBarChart2,
+  scans: Camera,
 };
 
 export interface NavGlyphProps {

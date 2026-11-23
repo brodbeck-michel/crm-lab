@@ -39,7 +39,8 @@ export type NavIcon =
   | 'doctors'
   | 'agenda'
   | 'portfolios'
-  | 'visit-report';
+  | 'visit-report'
+  | 'scans';
 
 /** Papéis de tenant. `platform_operator` NÃO entra — o console é isolado (PAGES.md §11). */
 export const TENANT_ROLES: readonly UserRole[] = ['attendant', 'representative', 'manager', 'admin'] as const;
@@ -200,6 +201,14 @@ export const APP_ROUTES: readonly AppRoute[] = [
     requiredRoles: TENANT_ROLES,
     inSidebar: true,
     icon: 'patients',
+  },
+  {
+    // CRMLAB-184 (D-327, PAGES.md §24a): a fila das fotos do celular, logo abaixo de Contatos.
+    path: '/scans',
+    label: 'Digitalizações',
+    requiredRoles: TENANT_ROLES,
+    inSidebar: true,
+    icon: 'scans',
   },
 
   // ── Domínio LIS (Onda 10) ────────────────────────────────────────────────

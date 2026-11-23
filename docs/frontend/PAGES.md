@@ -14,6 +14,7 @@ Especificação das telas: rota, layout, componentes, dados consumidos e permiss
 /attendance                   → Atendimento (inbox 3 colunas)
 /contacts                     → Busca de Contatos (antiga /patients redireciona, D-294)
 /contacts/:id                 → Ficha do Contato (antiga /patients/:id redireciona)
+/scans                        → Digitalizações (fila das fotos do celular — CRMLAB-184, §24a)
 /budget/new?conversationId=   → Novo Orçamento
 /proposals                    → Pipeline de Propostas
 /catalog                      → Catálogo de Exames        (aba "Exames" de Cadastros — CRMLAB-143)
@@ -82,6 +83,7 @@ na mesma linha da busca — as abas de Cadastros, acima, são a navegação prin
 | `/attendance` | attendant · representative · manager · admin | sim | solto |
 | `/contacts` | attendant · representative · manager · admin | sim | solto |
 | `/contacts/:id` | attendant · representative · manager · admin | não | — |
+| `/scans` (rótulo "Digitalizações", CRMLAB-184, §24a) | attendant · representative · manager · admin | sim (logo abaixo de Contatos) | solto |
 | `/budget/new` | attendant · representative · manager · admin | não | — |
 | `/proposals` | attendant · representative · manager · admin | sim | solto |
 | `/catalog` (aba "Exames" de Cadastros) | attendant · representative · manager · admin | não (aba) | — |
@@ -2110,6 +2112,30 @@ aqui." Outro erro numa foto: ela fica com "Tentar de novo" e as outras seguem.
 
 **Layout:** coluna única, alvos de toque grandes, `env(safe-area-inset-*)` respeitado; só tokens (regra 5).
 Chamadas pelo módulo `src/api/capture.ts` (credentials `include`, sem Bearer).
+
+---
+
+## 24a. Digitalizações (`/scans`) — fila das fotos do celular (CRMLAB-184, D-327)
+
+**Papéis:** attendant · representative · manager · admin (a fila é do laboratório, API_CONTRACTS §15.3).
+Item solto no trilho, logo abaixo de **Contatos**, ícone de câmera.
+
+A mesma fila do clipe "Digitalizações" do atendimento (§2), numa tela própria para a recepção
+**ver** o que chegou do celular sem abrir uma conversa. Enviar ao paciente continua sendo pelo clipe
+do Composer — esta tela não manda nada.
+
+- Dados: `GET /scans` (mais nova primeiro, sem as vencidas). Sem WS: recarrega ao abrir a tela e no
+  botão **Atualizar** (ação do `PageHeader`)
+- Grade de miniaturas (2/3/4/6 colunas por largura). Cada foto: miniatura (busca autenticada,
+  `useAuthenticatedMedia`), "há X · nome do dispositivo" embaixo e o botão de lixeira no canto
+- Clique na miniatura abre o `ImageLightbox` (zoom, ↓ baixar, setas para a anterior/próxima da fila;
+  título "dd/mm/aaaa hh:mm · dispositivo")
+- **Descartar:** `window.confirm` "Descartar esta foto? Ela sai da fila Digitalizações para todo mundo."
+  → `DELETE /scans/:id`; erro → toast "Não foi possível descartar a foto."
+- Vazio: "Nenhuma foto. Tire pelo atalho Digitalizar no celular." Erro de carga: "Não foi possível
+  carregar as fotos." + **Tentar de novo**
+- Subtítulo: "Fotos tiradas pelo celular do laboratório. Para enviar ao paciente, use o clipe
+  › Digitalizações na conversa."
 
 ---
 

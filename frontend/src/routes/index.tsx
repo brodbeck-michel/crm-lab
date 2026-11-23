@@ -38,6 +38,7 @@ import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
 import Digitalizar from '@/pages/Digitalizar';
+import Scans from '@/pages/Scans';
 import { RequireAuth, RequireRoles, RoleHomeRedirect } from './guards';
 import { ADMIN_ONLY, MANAGER_PLUS, PLATFORM_ONLY, TENANT_ROLES, VISITATION } from './route-config';
 
@@ -91,6 +92,7 @@ export const appRoutes: RouteObject[] = [
               { path: 'attendance', element: <Attendance /> },
               { path: 'contacts', element: <PatientsList /> },
               { path: 'contacts/:id', element: <PatientProfile /> },
+              { path: 'scans', element: <Scans /> },
               // Rota antiga (CRMLAB-126, D-294): favoritos e links salvos continuam abrindo.
               { path: 'patients', element: <LegacyPatientsRedirect /> },
               { path: 'patients/:id', element: <LegacyPatientsRedirect /> },

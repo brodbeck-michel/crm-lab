@@ -112,7 +112,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
     ]);
   });
 
-  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas e Contatos, nessa ordem', () => {
+  it('itens soltos: Atendimento, Chat Interno, Propostas, Vendas, Contatos e Digitalizações, nessa ordem', () => {
     const { ungrouped } = sidebarSectionsFor('admin');
 
     expect(ungrouped.map((r) => r.label)).toEqual([
@@ -121,6 +121,7 @@ describe('sidebarSectionsFor — grupos do trilho (CRMLAB-4, D-129, enxugado no 
       'Propostas',
       'Vendas',
       'Contatos',
+      'Digitalizações',
     ]);
   });
 

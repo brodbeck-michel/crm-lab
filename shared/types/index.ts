@@ -11,6 +11,7 @@ export * from './insurance.types.js';
 export * from './doctor.types.js';
 export * from './visit.types.js';
 export * from './visit-purpose.types.js';
+export * from './visitation-report.types.js';
 export * from './doctor-timeline.types.js';
 export * from './proposal.types.js';
 export * from './proposal-reminder.types.js';

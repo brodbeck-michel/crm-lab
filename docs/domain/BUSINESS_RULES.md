@@ -987,6 +987,51 @@ interações com ele, com autor e data.
 
 ---
 
+## 15b. Visitação Médica — relatório de visitação (CRMLAB-193, D-333)
+
+Tela **Relatório de Visitação** (grupo Gestão). Representante (só os números dele), gestor e admin
+(todos, ou um representante escolhido). A atendente não acessa.
+
+- **Período:** dias de calendário de São Paulo, inclusive as duas pontas, até 366 dias. Padrão: o
+  mês corrente inteiro. A visita entra no período pela **data prevista** (a da agenda).
+- **Escopo:** o representante vê as visitas dos médicos **da carteira dele** e as visitas em que
+  **ele é o responsável**; a carteira dele são os médicos dele. O filtro de representante não existe
+  para ele (o servidor ignora). O gestor que escolhe um representante vê exatamente o que ele vê.
+- **Filtros:** representante (gestor/admin), finalidade e classe ABC valem para cards, tabela, barras
+  e evolução. Médico ainda **sem classe** (calculada só no recálculo diário) não entra em filtro A/B/C
+  e conta à parte como "sem classe".
+
+**Fórmulas:**
+
+| Indicador | Fórmula |
+|---|---|
+| Agendadas / Realizadas / Canceladas / Não recebidas | nº de visitas do período em cada status atual ("agendadas" = ainda abertas) |
+| **Taxa de realização** | realizadas ÷ (realizadas + canceladas + não recebidas) × 100 — as abertas **não entram** (o mês corrente tem visitas que ainda vão acontecer). Sem encerrada → "—" |
+| **Duração média** | média de (check-out − check-in), em minutos, das **realizadas com os dois horários**. Sem check-out (ou sem check-in) fica de fora. Sem amostra → "—" |
+| **Cobertura** | médicos **ativos** da carteira com ≥ 1 visita **realizada** no período (por qualquer responsável) ÷ médicos **ativos** da carteira × 100. Inativo sai dos dois lados. Carteira vazia → "—". Sem representante escolhido, a carteira é o laboratório inteiro |
+| Cobertura por A/B/C | a mesma conta, só com os médicos de cada classe |
+| **Reagendamentos** | nº de mudanças de data (histórico) feitas no período; a mesma visita reagendada 2× conta 2 |
+
+- **Por representante:** carteira (ativos), médicos visitados, cobertura (geral e por A/B/C) pela
+  carteira dele; realizadas, cancelamentos, não recebidas e reagendamentos pelas visitas **em que ele
+  é o responsável**. Linhas: representantes ativos, e gestor/admin ativos com carteira ou com visita
+  no período.
+- **Por finalidade:** visitas do período por finalidade (total e realizadas), barra na cor da
+  finalidade.
+- **Evolução:** por semana (segunda a domingo) até 92 dias de período, por mês acima (a pessoa pode
+  trocar). Baldes vazios aparecem zerados.
+- **Esquecidos — "sem visita realizada há mais de X dias":** médicos **ativos** do escopo cuja última
+  visita realizada (de qualquer responsável) foi há mais de X dias de calendário, **ou que nunca foram
+  visitados**. X padrão 60 (1 a 730). Não depende do período nem da finalidade. Ordem: A, B, C, sem
+  classe; dentro da classe, nunca visitado primeiro, depois quem está há mais dias.
+- **Exportar CSV** da tabela por representante e da lista de esquecidos (`;`, UTF-8 com BOM, decimal
+  com vírgula).
+- **Carteiras:** cada carteira (e o balde "sem responsável") mostra o corte A/B/C dos médicos
+  **ativos** ("A n · B n · C n", e "sem classe n" quando houver).
+- Leitura pura: sem auditoria.
+
+---
+
 ## 16. Participantes da conversa (CRMLAB-93, D-263)
 
 - A conversa tem **uma dona** (`assigned_to`) e **zero ou mais participantes**. Participante vê e

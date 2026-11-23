@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-21 (CRMLAB-184: Digitalizar validado em hml; merge da main, D-327 e migração 069)
+**Última atualização:** 2026-11-23 (CRMLAB-184: tela Digitalizações `/scans` no trilho, abaixo de Contatos)
 
 ---
 
@@ -4241,6 +4241,14 @@ loga `whatsapp.inbound_unsupported` (`type`, `subtype` = `unsupported.type`, `ex
 `code`/`title`/`details`; sem conteúdo nem telefone). Quando a Meta informa `unsupported.type` conhecido
 (`view_once`, `poll`/`poll_creation`, `edit`, `revoke`), o aviso diz o que foi; senão segue o genérico.
 API_CONTRACTS (tabela do webhook da Meta) atualizada. Testes: `crmlab139-webhook-meta.spec.ts` (+2).
+
+### ✅ CRMLAB-184 (complemento) — tela Digitalizações `/scans` no trilho (2026-11-23)
+
+Branch `feature/CRMLAB-184-tela-digitalizacoes`. A fila só aparecia no clipe do Composer; agora tem tela
+própria (PAGES.md §24a), item solto logo abaixo de **Contatos**, para todos os papéis de tenant: grade de
+miniaturas, lightbox (zoom, baixar, anterior/próxima) e descartar. Sem mudança de backend (`GET/DELETE /scans`
+já existiam, §15.3). Arquivos: `frontend/src/pages/Scans.tsx` (+ spec), `route-config.ts` (ícone `scans`),
+`NavGlyph.tsx` (Camera), `routes/index.tsx`.
 
 ### ✅ CRMLAB-184 — Digitalizar pelo celular: `/digitalizar` (PWA) + fila Digitalizações (2026-11-21, validado em hml)
 

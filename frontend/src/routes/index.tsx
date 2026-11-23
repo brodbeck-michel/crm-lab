@@ -33,6 +33,7 @@ import Doctors from '@/pages/Visitation/Doctors';
 import DoctorProfile from '@/pages/Visitation/DoctorProfile';
 import Agenda from '@/pages/Visitation/Agenda';
 import Portfolios from '@/pages/Visitation/Portfolios';
+import VisitationReport from '@/pages/Reports/Visitation';
 import PlatformTenants from '@/pages/Platform/Tenants';
 import PlatformTenantDetail from '@/pages/Platform/TenantDetail';
 import PlatformBilling from '@/pages/Platform/Billing';
@@ -124,6 +125,8 @@ export const appRoutes: RouteObject[] = [
               { path: 'visitation/agenda', element: <Agenda /> },
               { path: 'visitation/doctors', element: <Doctors /> },
               { path: 'visitation/doctors/:id', element: <DoctorProfile /> },
+              // CRMLAB-193 (D-333): Relatório de Visitação (o servidor recorta o representante).
+              { path: 'reports/visitation', element: <VisitationReport /> },
             ],
           },
         ],

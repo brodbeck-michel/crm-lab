@@ -27,7 +27,7 @@ function countsLabel(counts: DoctorPortfolioCounts): string {
   return `${total} · ${counts.activeDoctorCount} ativos`;
 }
 
-/** Corte A/B/C — só quando o servidor mandar (CRMLAB-188 integrado). */
+/** Corte A/B/C dos médicos ativos (CRMLAB-193, D-333 item 7); sem a chave, nada. */
 function abcLabel(counts: DoctorPortfolioCounts): string | null {
   if (!counts.abc) return null;
   const { A, B, C, unclassified } = counts.abc;
@@ -144,7 +144,10 @@ export default function Portfolios() {
                   >
                     <span className="min-w-0">
                       <span className="block font-semibold text-text">Sem responsável / responsável inelegível</span>
-                      <span className="block text-caption text-neutral-600">Atribua um responsável a estes médicos</span>
+                      <span className="block text-caption text-neutral-600">
+                        Atribua um responsável a estes médicos
+                        {abcLabel(unassigned) ? ` · ${abcLabel(unassigned)}` : ''}
+                      </span>
                     </span>
                     <span className="whitespace-nowrap text-caption tabular-nums text-text">{countsLabel(unassigned)}</span>
                   </button>

@@ -23,6 +23,8 @@ import type {
   ResponseTimeQuery,
   SearchMessagesQuery,
   SalesSummaryQuery,
+  VisitationReportQuery,
+  VisitationReportStaleQuery,
 } from '@crm-lab/shared';
 import type { ExecutiveReportQuery } from './reports';
 
@@ -238,6 +240,10 @@ export const queryKeys = {
   visits: (filters: ListVisitsQuery) => ['visits', filters] as const,
   /** ['visits', 'detail', id] — visita aberta no modal da Agenda (CRMLAB-87) */
   visit: (id: string) => ['visits', 'detail', id] as const,
+  /** ['visitation-reports', 'summary', query] — Relatório de Visitação (§22d, CRMLAB-193) */
+  visitationReport: (query: VisitationReportQuery) => ['visitation-reports', 'summary', query] as const,
+  /** ['visitation-reports', 'stale', query] — médicos sem visita há mais de X dias (CRMLAB-193) */
+  visitationStaleDoctors: (query: VisitationReportStaleQuery) => ['visitation-reports', 'stale', query] as const,
 } as const;
 
 /** Prefixos usados para invalidar um escopo inteiro (todas as variações de filtro). */
@@ -276,6 +282,7 @@ export const queryScopes = {
   attendants: ['attendants'] as const,
   doctors: ['doctors'] as const,
   visits: ['visits'] as const,
+  visitationReports: ['visitation-reports'] as const,
 } as const;
 
 /**

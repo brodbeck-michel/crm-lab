@@ -1843,13 +1843,45 @@ Item **"Carteiras"** (ícone `Briefcase`) do grupo "Visitação Médica", depois
 `pages/Visitation/Portfolios.tsx`.
 
 - **Lista de carteiras:** uma linha por responsável (nome, perfil, "N médicos · M ativos") e, no fim,
-  a linha **"Sem responsável / responsável inelegível"** com o balde `unassigned`. Quando o
-  servidor mandar `abc` (CRMLAB-188 integrado), a linha mostra "A n · B n · C n"; sem a chave, nada.
+  a linha **"Sem responsável / responsável inelegível"** com o balde `unassigned`. **Corte A/B/C
+  (CRMLAB-193, D-333 item 7):** cada linha — inclusive o balde — mostra "A n · B n · C n" dos médicos
+  **ativos**, mais "sem classe n" quando houver médico ainda não classificado. Sem a chave `abc`
+  (servidor antigo), nada.
 - **Clicar numa linha** abre, ao lado (embaixo no celular), os médicos daquela carteira (até 100,
   por nome) com **checkbox** em cada um e "Selecionar todos".
 - **[Transferir selecionados]** abre o `Modal` "Transferir médicos": `Select` "Novo responsável"
   (perfis elegíveis, menos o dono atual), checkbox "Levar junto as visitas futuras agendadas" e
   [Transferir]. Sucesso: toast "N médicos transferidos (M visitas)" e as listas recarregam.
+
+### 22d. Relatório de Visitação (`/reports/visitation`) — representante (os dele) · gestor · admin (CRMLAB-193, D-333)
+
+Item **"Relatório de Visitação"** (ícone `FileBarChart2`, o mesmo de Resultados — `NavIcon`
+`visit-report`) no grupo **Gestão**, depois de "Busca Ativa"; `requiredRoles: VISITATION` (a
+atendente não vê, e a rota redireciona). Fonte: `GET /visitation-reports/summary` e
+`GET /visitation-reports/stale-doctors` (API_CONTRACTS.md §14b); finalidades de `GET
+/settings/visit-purposes`, representantes de `useVisitationResponsibles`. Fórmulas: BUSINESS_RULES
+§15b. Arquivo `pages/Reports/Visitation.tsx`.
+
+- **Barra de filtro** (mesmo padrão de Resultados): `PeriodFilter` (padrão: **mês corrente inteiro**,
+  dia 1 ao último dia), `Select` **Representante** (só gestor/admin; "Todos"), `Select`
+  **Finalidade** ("Todas") e `Select` **Curva ABC** ("Todas | A | B | C"). Para o representante, um
+  texto "Seus números: sua carteira e as visitas em que você é o responsável." no lugar do seletor.
+- **Cards** (`ResultsKpiCard`, grade de 4 + 3): Agendadas, Realizadas, Canceladas, Não recebidas;
+  **Taxa de realização** (com barra de progresso), **Duração média** ("27 min", legenda "N visitas com
+  check-in e check-out") e **Cobertura** (barra; legenda "V de C médicos ativos visitados"). `null` →
+  "—".
+- **Por representante** (`DataTable`): Representante, Carteira, Visitados, Cobertura, A, B, C
+  (cada um "v/c"), Realizadas, Reagend., Cancel. Botão **[Exportar CSV]**.
+- **Visitas por finalidade:** barras horizontais (Recharts, `components/analytics/chartTokens`),
+  cada barra na cor `--color-purpose-<chave>-dot` da finalidade. Vazio → "Sem visita no período."
+- **Evolução:** linhas (Recharts) de total e realizadas por balde; `SegmentedControl` Semana | Mês.
+- **Médicos sem visita há mais de X dias:** campo numérico X (padrão 60, 1–730), lista
+  (`DataTable`): Médico (link para a ficha), Classe, Responsável, Última visita, Dias sem visita
+  ("Nunca visitado" quando nulo). Respeita Representante e Curva ABC, não o período nem a
+  finalidade. Botão **[Exportar CSV]**. Aviso quando `truncated`.
+- **CSV** gerado no navegador (`lib/csv.ts`): `;`, UTF-8 com BOM, decimal com vírgula, células
+  iniciadas por `= + - @` prefixadas com `'`.
+- Período inválido: aviso do próprio `PeriodFilter` e nenhuma consulta.
 
 ### 22b. Ficha do médico (`/visitation/doctors/:id`) — representante (carteira) · gestor · admin (CRMLAB-89, D-261 · D-329)
 

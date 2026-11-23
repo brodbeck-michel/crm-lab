@@ -7676,3 +7676,89 @@ frontend `api/doctors.ts`, `api/query-keys.ts`, `pages/Visitation/DoctorProfile.
 `tests/db/migration-074-doctor-timeline-comments.spec.ts`, `tests/doctors/doctor-timeline-feed.spec.ts`,
 inventário (142 → 145), `DoctorProfile.spec.tsx`. SCHEMA §38a, API_CONTRACTS §13, BUSINESS_RULES §15,
 PAGES §22b, SERVICES §32, SECURITY "Visitação Médica".
+
+## 2026-11-22 — Relatório de Visitação (CRMLAB-193, épico CRMLAB-187 Visitação v2)
+
+### D-333: Relatório de Visitação (indicadores, por representante, esquecidos) e corte A/B/C nas Carteiras
+**Contexto:** com agenda, registro, finalidade, carteira e curva ABC no ar (D-256, D-258, D-328, D-329,
+D-330), o gestor não tinha onde ver **quanto** se visita, **quem** cobre a carteira e **quais médicos
+estão esquecidos**; o representante não via os próprios números. As Carteiras (D-329 item 7) deixaram o
+corte A/B/C pendente. Escopo aprovado pelo dono do produto no card.
+**Decisão:**
+1. **Tela `/reports/visitation` ("Relatório de Visitação")**, no grupo **Gestão** da Sidebar (onde ficam
+   Resultados e Busca Ativa). Acesso: **representante, gestor e admin** (`VISITATION`); a atendente não
+   vê o item e a rota redireciona. Para o representante o grupo Gestão aparece só com este item.
+2. **Duas rotas novas**, módulo próprio `/visitation-reports` (o `/reports` existente barra tudo que não é
+   gestor/admin num `router.use`, e um segundo módulo sob o mesmo prefixo herdaria a recusa):
+   `GET /visitation-reports/summary` (indicadores + por representante + por finalidade + evolução) e
+   `GET /visitation-reports/stale-doctors` (esquecidos — não depende do período, depende de "hoje").
+   Atendente → `403 FORBIDDEN` (perfil, como toda a Visitação, D-329 item 3).
+3. **Período:** `from`/`to` são **dias de calendário de São Paulo** (UTC−3 fixo, como `saoPauloToday`),
+   inclusivos; no máximo **366 dias**. A visita entra no período pela **data prevista** (`scheduled_at`,
+   a mesma da agenda; reagendar muda essa data). Padrão da tela: **mês corrente inteiro** (do dia 1 ao
+   último dia — o mês tem visitas agendadas à frente, que contam como "agendadas").
+4. **Fórmulas (BUSINESS_RULES §15b):**
+   - **Agendadas / realizadas / canceladas / não recebidas:** visitas do período pelo status atual.
+     "Agendadas" = ainda abertas (`agendada`).
+   - **Taxa de realização = realizadas ÷ (realizadas + canceladas + não recebidas)**, em %. As
+     `agendada` ficam **fora do denominador**: o período padrão é o mês corrente, e dividir pelo total
+     puniria as visitas que ainda vão acontecer (no dia 5 a taxa seria ~15% sem ninguém ter falhado).
+     Sem visita encerrada → `null` ("—").
+   - **Duração média** = média de `check_out_at − check_in_at`, em minutos, das visitas **realizadas**
+     com **os dois** horários (e check-out ≥ check-in). Visita sem check-out (ou sem check-in) **não
+     entra**; `durationSampleSize` diz quantas entraram. Sem amostra → `null`.
+   - **Cobertura** = médicos **ativos** da carteira com **≥ 1 visita realizada** no período ÷ médicos
+     **ativos** da carteira. Médico inativo sai do numerador e do denominador (vale o `is_active`
+     atual — não há histórico). A visita realizada conta **seja quem for o responsável** (cobertura
+     feita por outro representante também cobre o médico). Carteira vazia → `null`.
+     "Carteira" = a do representante logado; a do representante filtrado (gestor); sem filtro, **todos
+     os médicos ativos do laboratório** (inclusive os sem responsável).
+   - **Reagendamentos** = eventos do histórico de datas (`doctor_visit_reschedules`) com `changed_at`
+     no período — dois reagendamentos da mesma visita contam 2.
+5. **Escopo:** gestor/admin veem o laboratório (ou o representante escolhido em `responsibleId`).
+   O **representante** vê só o escopo dele da D-329 (visitas de médico da carteira **ou** em que é o
+   responsável; carteira = médicos dele) e **o servidor ignora o `responsibleId`** que ele mandar
+   (conservador: não vira erro nem oráculo, e nunca amplia o recorte). Com `responsibleId`, o gestor vê
+   **exatamente o que aquele representante vê**.
+   **Tabela por representante:** linhas = usuários **ativos** de perfil elegível (representante,
+   gestor, admin) que são representantes, têm médico na carteira ou foram responsáveis por visita no
+   período; para o representante (e para o gestor com `responsibleId`), só a linha dele. Carteira e
+   cobertura pela carteira do usuário; realizadas/canceladas/não recebidas/reagendamentos pelas visitas
+   em que **ele é o responsável** (quem foi). Filtros de finalidade e ABC valem para tabela, cards,
+   barras e evolução.
+6. **Médico sem classe (`abc_class` nulo)** = ainda não calculado (médico novo até o próximo recálculo
+   diário — D-328 item 9). **Não se inventa classe:** ele conta à parte (`unclassified`) na cobertura
+   por classe e nas Carteiras, não entra em nenhum filtro A/B/C e vai para o fim da lista de esquecidos.
+   Depois do recálculo, sem venda ele é **C** (D-328), como manda a regra.
+7. **Carteiras (fecha a pendência da D-329 item 7):** `GET /doctors/portfolios` passa a **sempre**
+   mandar `abc: { A, B, C, unclassified }` por linha e em `unassigned`, contando **só médicos ativos**
+   (soma = `activeDoctorCount`; a carteira é planejamento de visita). A tela já exibia "A n · B n · C n"
+   quando a chave vinha. A chave segue opcional no shape (compatibilidade).
+8. **Esquecidos:** médicos **ativos** do escopo (carteira do representante; `responsibleId`/`abcClass`
+   para o gestor) cuja última visita **realizada** (por qualquer responsável) foi há **mais de X dias**
+   (dias de calendário de São Paulo entre a data da última visita e hoje), **ou que nunca tiveram visita
+   realizada**. X padrão **60**, de 1 a 730. Data da última visita = `check_out_at` (realizada sempre
+   tem — CHECK da 050; visita com check-in sem check-out segue `agendada` e não conta). Ordem: **A, B, C, sem classe**; dentro da classe, **nunca visitado primeiro**, depois mais
+   dias sem visita; empate por nome. Teto de 1000 linhas (`truncated`). O filtro de **finalidade não se
+   aplica** (é sobre o médico, não sobre um tipo de visita) e o período também não.
+9. **Evolução:** `week` (semanas começando na **segunda**) ou `month`; sem o parâmetro, `week` até 92
+   dias de período, `month` acima. Todo balde do período aparece, zerado se vazio. Linhas de realizadas
+   e de total.
+10. **Por finalidade:** total e realizadas por finalidade no período, só finalidades com visita; barra
+    pintada com o token da finalidade (`--color-purpose-<chave>-dot`), nunca hex.
+11. **CSV no navegador** (sem endpoint): tabela por representante e lista de esquecidos. Separador
+    `;` e BOM UTF-8 (Excel pt-BR abre com acento e sem misturar colunas), decimal com vírgula, células
+    que começam com `= + - @` prefixadas com `'` (injeção de fórmula). Helper `frontend/src/lib/csv.ts`.
+12. **Sem migração:** os filtros usam os índices existentes (`idx_doctor_visits_tenant_scheduled`,
+    `idx_doctors_tenant_abc_class`, `idx_doctor_visit_reschedules_*`). Relatório não gera audit
+    (leitura).
+**Ambiguidades resolvidas pelo dev (conservador):** denominador da taxa sem as abertas (item 4); visita
+conta pela data prevista; cobertura conta visita de qualquer responsável; `responsibleId` do
+representante ignorado (item 5); sem classe à parte, nunca virando C antes do recálculo (item 6); ABC
+das Carteiras só com ativos (item 7); esquecidos sem filtro de finalidade (item 8); item no grupo
+Gestão (item 1).
+**Impacto:** `shared/types/visitation-report.types.ts` (novo), `doctor.types.ts` (comentário de `abc`);
+`backend/src/{controllers,services,repositories}/visitation-report.*` (novos), `doctor.repository.ts`
+(`portfolios` com `abc`), `http/modules.ts`; `frontend/src/pages/Reports/Visitation.tsx`,
+`api/visitation-reports.ts`, `lib/csv.ts`, `routes/`; API_CONTRACTS §13 e §14b, BUSINESS_RULES §15b,
+PAGES §22c e §22d.

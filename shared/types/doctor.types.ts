@@ -373,7 +373,11 @@ export interface ListDoctorsResponse {
 
 // --- Carteiras e transferência (CRMLAB-189, D-329) ---
 
-/** Corte pela classificação ABC do médico — entra quando o CRMLAB-188 for integrado. */
+/**
+ * Corte pela classificação ABC dos médicos ATIVOS (CRMLAB-193, D-333 item 7): soma
+ * `activeDoctorCount`. `unclassified` = médico ainda sem classe calculada (novo, até o
+ * próximo recálculo diário — depois dele, sem venda é C, D-328).
+ */
 export interface DoctorPortfolioAbc {
   A: number;
   B: number;
@@ -385,7 +389,7 @@ export interface DoctorPortfolioCounts {
   /** Ativos e inativos. */
   doctorCount: number;
   activeDoctorCount: number;
-  /** Opcional: só vem quando houver classificação ABC no médico (CRMLAB-188). */
+  /** Sempre enviado desde o CRMLAB-193 (D-333); opcional no shape por compatibilidade. */
   abc?: DoctorPortfolioAbc;
 }
 

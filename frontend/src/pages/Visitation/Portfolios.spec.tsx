@@ -109,6 +109,21 @@ describe('Carteiras (/visitation/portfolios)', () => {
     expect(await screen.findByText(/A 1 · B 1 · C 0/)).toBeInTheDocument();
   });
 
+  it('corte A/B/C em cada carteira e no balde, com "sem classe" quando houver (CRMLAB-193, D-333)', async () => {
+    portfoliosMock.mockResolvedValue({
+      portfolios: [
+        { ...portfolios.portfolios[0]!, abc: { A: 1, B: 0, C: 0, unclassified: 1 } },
+        { ...portfolios.portfolios[1]!, abc: { A: 0, B: 0, C: 0, unclassified: 0 } },
+      ],
+      unassigned: { doctorCount: 1, activeDoctorCount: 1, abc: { A: 0, B: 0, C: 1, unclassified: 0 } },
+    });
+    renderPage();
+    const list = within(await screen.findByTestId('portfolio-list'));
+    expect(list.getByText(/A 1 · B 0 · C 0 · sem classe 1/)).toBeInTheDocument();
+    expect(list.getByText(/A 0 · B 0 · C 0$/)).toBeInTheDocument();
+    expect(list.getByText(/Atribua um responsável a estes médicos · A 0 · B 0 · C 1/)).toBeInTheDocument();
+  });
+
   it('clicar na carteira lista os médicos dela; o balde pede ?unassigned=true', async () => {
     const user = userEvent.setup({ delay: null });
     renderPage();

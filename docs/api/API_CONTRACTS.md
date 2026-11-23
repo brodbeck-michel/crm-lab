@@ -6345,9 +6345,11 @@ Shapes `DoctorPortfolio` / `ListDoctorPortfoliosResponse` em `shared/types/docto
 - **`unassigned`:** os médicos sem responsável, com responsável de perfil inelegível (atendente) ou
   inativo — o mesmo recorte de `?unassigned=true`. Cada médico conta **uma vez** (numa linha ou aqui).
 - `doctorCount` conta ativos e inativos; `activeDoctorCount`, só os ativos.
-- **`abc?: { "A": n, "B": n, "C": n, "unclassified": n }`** — corte pela classificação ABC do médico.
-  **Opcional:** só passa a vir quando o campo de classificação (CRMLAB-188) for integrado; até lá a
-  chave não vem e a tela não mostra a coluna.
+- **`abc: { "A": n, "B": n, "C": n, "unclassified": n }`** — corte pela classificação ABC dos médicos
+  **ativos** (CRMLAB-193, D-333 item 7): soma `activeDoctorCount`. `unclassified` = médico com
+  `abcClass: null` (ainda não calculado — novo, até o próximo recálculo diário). Vem **sempre**, em
+  cada linha e em `unassigned`; continua opcional no shape (`DoctorPortfolioCounts.abc?`) só por
+  compatibilidade. Ex.: `"abc": { "A": 2, "B": 3, "C": 6, "unclassified": 0 }`.
 
 **Erros:** `FORBIDDEN` (403 — `attendant`, `representative`, `platform_operator`)
 
@@ -6987,6 +6989,127 @@ Parcial: `name?`, `color?`, `isActive?`, `sortOrder?` (inteiro ≥ 0). Sem mudan
 audit. **Response (200):** `VisitPurpose`. Audit `update_visit_purpose` (só o diff).
 
 **Erros:** `NOT_FOUND` (404, inexistente ou de outro tenant), `VALIDATION_ERROR`, `FORBIDDEN`
+
+---
+
+## 14b. Visit reports (Relatório de Visitação — CRMLAB-193, D-333)
+
+Tela `/reports/visitation` (PAGES.md §22d). Fórmulas em BUSINESS_RULES §15b. Shapes em
+`shared/types/visitation-report.types.ts`. **Representante, gestor e admin** (`VISITATION_ROLES`); a
+atendente recebe `403 FORBIDDEN` (`requiredRoles: ["representative","manager","admin"]`).
+Módulo próprio `/visitation-reports` (o `/reports` do §5c é só gestor/admin no router inteiro).
+
+**Escopo (D-333 item 5):** gestor/admin veem o laboratório; com `responsibleId`, exatamente o que
+aquele usuário veria. Para o **representante** o servidor recorta pelo escopo da D-329 (visitas de
+médico da carteira dele **ou** em que ele é o responsável; carteira = médicos dele) e **ignora**
+`responsibleId`. `responsibleId`/`purposeId` de outro tenant ou inexistente não dão erro: o recorte
+devolve zeros/listas vazias (nada cruza tenant — `withTenant` em toda query).
+
+### GET /visitation-reports/summary
+
+**Query Params:**
+```
+?from=2026-11-01&to=2026-11-30   // obrigatórios; dias de calendário de São Paulo, inclusivos; to ≥ from; ≤ 366 dias
+?responsibleId=<uuid>            // gestor/admin; ignorado para o representante
+?purposeId=<uuid>                // só visitas desta finalidade
+?abcClass=A|B|C                  // só médicos desta classe (sem classe nunca entra num filtro)
+?granularity=week|month          // evolução; omitido → week até 92 dias de período, month acima
+```
+
+**Response (200)** — `VisitationReport`:
+```json
+{
+  "period": { "from": "2026-11-01", "to": "2026-11-30" },
+  "granularity": "week",
+  "scope": "all",
+  "summary": {
+    "scheduled": 14, "completed": 22, "cancelled": 3, "notReceived": 2, "total": 41,
+    "reschedules": 5,
+    "completionRate": 81.5,
+    "averageDurationMinutes": 27.3, "durationSampleSize": 21,
+    "coverage": { "portfolioDoctors": 40, "visitedDoctors": 18, "rate": 45.0 }
+  },
+  "byRepresentative": [
+    {
+      "responsible": { "id": "7c3d…", "name": "Carla Souza" },
+      "portfolioDoctors": 12, "visitedDoctors": 7,
+      "coverage": { "portfolioDoctors": 12, "visitedDoctors": 7, "rate": 58.3 },
+      "coverageByClass": {
+        "A": { "portfolioDoctors": 2, "visitedDoctors": 2, "rate": 100.0 },
+        "B": { "portfolioDoctors": 3, "visitedDoctors": 2, "rate": 66.7 },
+        "C": { "portfolioDoctors": 7, "visitedDoctors": 3, "rate": 42.9 },
+        "unclassified": { "portfolioDoctors": 0, "visitedDoctors": 0, "rate": null }
+      },
+      "completed": 9, "cancelled": 1, "notReceived": 0, "reschedules": 2
+    }
+  ],
+  "byPurpose": [
+    { "purpose": { "id": "…", "name": "Visita", "color": "azul" }, "total": 30, "completed": 18 }
+  ],
+  "evolution": [
+    { "bucket": "2026-10-27", "total": 6, "completed": 4, "cancelled": 1, "notReceived": 0 }
+  ]
+}
+```
+- **Contagens** pelo status atual das visitas com `scheduledAt` no período. `scheduled` = ainda
+  `agendada`.
+- **`completionRate`** = `completed ÷ (completed + cancelled + notReceived) × 100`, uma casa;
+  `null` sem visita encerrada.
+- **`averageDurationMinutes`**: média de `checkOutAt − checkInAt` das `realizada` com os dois
+  (e check-out ≥ check-in), uma casa; `null` sem amostra. `durationSampleSize` = quantas entraram.
+- **`coverage`**: médicos **ativos** da carteira com ≥ 1 visita `realizada` no período (qualquer
+  responsável; respeita `purposeId`) ÷ médicos ativos da carteira (respeita `abcClass`). Sem
+  `responsibleId` (gestor), a carteira é o laboratório inteiro. `rate` com uma casa; `null` com
+  carteira vazia.
+- **`reschedules`**: linhas de `doctor_visit_reschedules` com `changedAt` no período, da visita no
+  escopo (e nos filtros de finalidade/ABC).
+- **`byRepresentative`**: usuários **ativos** de perfil elegível que são representantes, têm médico
+  na carteira ou foram responsáveis por visita no período; ordem por nome. Representante (ou gestor com
+  `responsibleId`) → só aquela linha. Carteira/cobertura pela carteira do usuário; `completed`,
+  `cancelled`, `notReceived` e `reschedules` pelas visitas em que **ele é o responsável**.
+- **`byPurpose`**: só finalidades com visita no período; ordem por `total` desc, depois nome.
+- **`evolution`**: todos os baldes que tocam o período (semana começando na segunda, ou mês), zerados
+  quando vazios; `bucket` = 1º dia do balde (pode ser anterior a `from`).
+
+**Erros:** `VALIDATION_ERROR` (400 — data ausente/inválida, `to < from`, período > 366 dias, uuid
+inválido, `abcClass`/`granularity` fora da lista), `FORBIDDEN` (403 — `attendant`, `platform_operator`)
+
+### GET /visitation-reports/stale-doctors
+
+**Query Params:**
+```
+?days=60               // X: inteiro 1–730, padrão 60
+?responsibleId=<uuid>  // gestor/admin: só a carteira deste usuário; ignorado para o representante
+?abcClass=A|B|C
+```
+
+**Response (200)** — `VisitationReportStaleResponse`:
+```json
+{
+  "days": 60,
+  "referenceDate": "2026-11-22",
+  "doctors": [
+    {
+      "id": "…", "name": "Dra. Júlia Prado", "crm": "12345", "crmUf": "SC", "specialty": "Pediatria",
+      "abcClass": "A", "responsible": { "id": "7c3d…", "name": "Carla Souza" },
+      "lastVisitAt": null, "daysSinceLastVisit": null
+    }
+  ],
+  "total": 1,
+  "truncated": false
+}
+```
+- Médicos **ativos** do escopo (carteira do representante; com `responsibleId`, a carteira daquele
+  usuário; sem, o laboratório) cuja última visita `realizada` (qualquer responsável) tem
+  `daysSinceLastVisit > days`, **ou nunca visitados** (`lastVisitAt: null`).
+- `lastVisitAt` = `checkOutAt` da última realizada (realizada sempre tem check-out — CHECK da migração 050).
+  `daysSinceLastVisit` = dias de calendário de São Paulo entre essa data e `referenceDate`.
+- **Ordem:** `abcClass` A, B, C, `null`; dentro da classe, nunca visitado primeiro, depois
+  `daysSinceLastVisit` desc, depois nome.
+- Até 1000 linhas; `total` = antes do corte; `truncated` = cortou.
+
+**Erros:** `VALIDATION_ERROR` (400 — `days` fora de 1–730, uuid inválido, `abcClass` inválida),
+`FORBIDDEN` (403 — `attendant`, `platform_operator`)
 
 ---
 

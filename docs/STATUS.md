@@ -4394,3 +4394,24 @@ API_CONTRACTS §13, BUSINESS_RULES §15, PAGES §22b, SERVICES §32, SECURITY "V
   comentários embutidos no item com teto de 100 (sem rota paginada); "Ver mais" por estimativa de linhas
   (4 linhas, 90 caracteres/linha); comentário aceito em visita encerrada e médico inativo; relato pela ficha
   edita só os três textos (data de retorno segue na Agenda).
+
+### ✅ CRMLAB-193 — Relatório de Visitação + corte A/B/C nas Carteiras (2026-11-22, aguardando validação)
+
+Branch `feature/CRMLAB-193-relatorio-visitas` (épico Visitação v2, CRMLAB-187). Contrato: D-333,
+BUSINESS_RULES §15b (fórmulas), API_CONTRACTS §13 (`portfolios.abc`) e §14b, PAGES §22c e §22d. Sem migração.
+- **shared:** `visitation-report.types.ts` (`VisitationReport*`, constantes de período/X/granularidade);
+  comentário de `DoctorPortfolioAbc` (agora sempre preenchido, só ativos).
+- **api:** módulo `/visitation-reports` (`visitation-report.{routes,service,repository}.ts`):
+  `GET /visitation-reports/summary` (cards, por representante, por finalidade, evolução semana/mês) e
+  `GET /visitation-reports/stale-doctors` (esquecidos, X padrão 60). Representante/gestor/admin; atendente
+  403; representante recortado pela D-329 com `responsibleId` ignorado. `GET /doctors/portfolios` passa a
+  mandar `abc` (ativos; sem classe em `unclassified`). Testes `tests/visits/visitation-report.spec.ts`
+  (fórmulas, bordas de período em São Paulo, período vazio, check-in sem check-out fora da média,
+  reagendamentos, inativo fora da cobertura, nunca visitado, limite de X, escopo por perfil, isolamento,
+  `portfolios.abc`) + `representative-scope.spec` (abc) + inventário (144 rotas).
+- **ui:** `/reports/visitation` no grupo Gestão (`pages/Reports/Visitation.tsx`, `api/visitation-reports.ts`,
+  `lib/csv.ts`), filtros período/representante/finalidade/ABC, cards, tabela, barras por finalidade (cor
+  da finalidade), evolução, esquecidos e CSV; Carteiras mostra o ABC também no balde "sem responsável".
+  Testes `Reports/Visitation.spec`, `lib/csv.spec`, `Portfolios.spec`, `route-config.spec`.
+- **Pendências/riscos:** médico sem classe (nulo até o recálculo diário) fica à parte, não vira C (D-333
+  item 6); período usa UTC−3 fixo (sem horário de verão, como o resto do sistema).

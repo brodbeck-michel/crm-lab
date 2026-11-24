@@ -5843,7 +5843,12 @@ Busca Ativa — orçamentos com **requisição** mas **sem pagamento recebido** 
 ?page=1&limit=20
 ?attendantId=<uuid>
 ?ageBand=0-7|8-15|16-30|30+
+?startDate=2026-10-25&endDate=2026-11-23   (opcionais, D-334)
 ```
+**Período (D-334):** sem `startDate` nem `endDate`, devolve a fila inteira em aberto (como antes).
+Com pelo menos um, recorta por `issuedOn` da linha que representa a requisição, **depois** do dedupe,
+com a mesma resolução das outras rotas do LIS (falta `endDate` → hoje; falta `startDate` → 30 dias até
+`endDate`).
 
 **Response (200):**
 ```json
@@ -5872,13 +5877,16 @@ D-021/D-078 — datas do LIS já são `DATE`, então não há fuso a considerar 
 `daysOpen` recortado nas 4 faixas de BUSINESS_RULES.md §11: `0-7`, `8-15`, `16-30`, `30+`.
 Ordenado por `daysOpen DESC` (o mais antigo primeiro — é uma fila de cobrança).
 
-**Erros:** `VALIDATION_ERROR` (400, `ageBand` fora do enum), `FORBIDDEN` (403,
+**Erros:** `VALIDATION_ERROR` (400, `ageBand` fora do enum, data fora do formato ou `endDate`
+antes de `startDate`), `FORBIDDEN` (403,
 `details.requiredRoles: ["manager","admin"]`)
 
 #### GET /lis-budgets/pending/summary
-Agregado da Busca Ativa por faixa de idade — os cartões do topo da tela.
+Agregado da Busca Ativa por faixa de idade. Alimenta o PDF de Busca Ativa e a seção de busca ativa do
+PDF Executivo (a tela não tem mais cartões de topo, D-334).
 
-**Query Params:** `?attendantId=<uuid>` (opcional)
+**Query Params:** `?attendantId=<uuid>`, `?startDate=YYYY-MM-DD`, `?endDate=YYYY-MM-DD` (todos
+opcionais; período com a mesma regra de `GET /lis-budgets/pending`, D-334)
 
 **Response (200):**
 ```json
@@ -5895,7 +5903,8 @@ Agregado da Busca Ativa por faixa de idade — os cartões do topo da tela.
 `byAgeBand` traz **sempre as 4 chaves**, com `0`/`0` onde não houver linha — mesmo princípio de
 `lossReasons` em `/analytics/conversion` (§5): o gráfico não pode ficar com buraco.
 
-**Erros:** `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+**Erros:** `VALIDATION_ERROR` (400, data fora do formato ou `endDate` antes de `startDate`),
+`FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 #### GET /lis-budgets/filters
 Opções para os seletores de filtro das telas de Resultados/Conferência/Busca Ativa — evita cada

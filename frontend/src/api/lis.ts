@@ -90,11 +90,15 @@ export function useLisBudgetsPending(
   });
 }
 
-export function useLisBudgetsPendingSummary(query: PendingLisBudgetsSummaryQuery = {}) {
+export function useLisBudgetsPendingSummary(
+  query: PendingLisBudgetsSummaryQuery = {},
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: queryKeys.lisBudgetsPendingSummary(query),
     queryFn: () => lisBudgetsApi.pendingSummary(query),
     staleTime: staleTimes.lis,
+    enabled: options.enabled ?? true,
   });
 }
 

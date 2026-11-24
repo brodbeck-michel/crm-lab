@@ -315,6 +315,9 @@ export interface PendingLisBudget {
 export interface ListPendingLisBudgetsQuery extends PaginationQuery {
   attendantId?: string;
   ageBand?: LisBudgetAgeBand;
+  /** D-334: sem nenhuma das duas datas, a fila inteira; com uma, recorta por `issuedOn`. */
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface ListPendingLisBudgetsResponse {
@@ -324,6 +327,9 @@ export interface ListPendingLisBudgetsResponse {
 
 export interface PendingLisBudgetsSummaryQuery {
   attendantId?: string;
+  /** D-334: mesma regra de `ListPendingLisBudgetsQuery`. */
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface PendingLisBudgetsSummary {

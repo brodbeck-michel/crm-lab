@@ -7762,3 +7762,30 @@ Gestão (item 1).
 (`portfolios` com `abc`), `http/modules.ts`; `frontend/src/pages/Reports/Visitation.tsx`,
 `api/visitation-reports.ts`, `lib/csv.ts`, `routes/`; API_CONTRACTS §13 e §14b, BUSINESS_RULES §15b,
 PAGES §22c e §22d.
+
+## 2026-11-23 — Busca Ativa com filtro de período (CRMLAB-197)
+
+### D-334: Busca Ativa recorta pelo período compartilhado e perde os cartões de topo
+**Contexto:** a Busca Ativa (PAGES §16) mostrava a fila inteira em aberto, desde sempre, com cartões
+de contagem por faixa de idade no topo. Com o backlog antigo, a faixa `30+` concentrava quase tudo
+(Santé em 23/11/2026: 132 de 136) e os cartões não respondiam a nenhuma pergunta da gestão. A regra
+de quem entra na fila (requisição sem pagamento, §11) **não muda** aqui; listar orçamento sem
+requisição fica no CRMLAB-196. Decisões do dono do produto no card.
+**Decisão:**
+1. `GET /lis-budgets/pending` e `GET /lis-budgets/pending/summary` aceitam `startDate`/`endDate`
+   opcionais (`YYYY-MM-DD`). **Sem nenhum dos dois, nada muda** (fila inteira). Com pelo menos um, o
+   período é resolvido como nas outras rotas do LIS (`resolvePeriod`: falta `endDate` → hoje; falta
+   `startDate` → 30 dias até `endDate`; início depois do fim → `VALIDATION_ERROR`).
+2. A data recortada é `issued_on` da linha que representa a requisição **depois** do dedupe — a
+   mesma data que conta `daysOpen`. O recorte vem depois do dedupe de propósito: filtrar antes
+   deixaria entrar uma requisição cujo orçamento "irmão" fora do período já foi pago.
+3. A tela usa o **mesmo período** de Resultados e Conferência (`useUIStore.lisFilters`, D-117) e
+   abre com o mesmo padrão (últimos 30 dias). Atendente e faixa continuam locais da tela.
+4. **Saem os cartões de topo** (total e um por faixa). Ficam a tabela, os filtros e o `AgeBadge`.
+   O summary continua sendo buscado (com o mesmo recorte) porque o PDF usa.
+5. O PDF de Busca Ativa imprime o período junto dos outros filtros.
+6. A seção de busca ativa do **PDF Executivo continua sem recorte** (carteira inteira em aberto):
+   `Results` segue chamando o summary sem datas.
+**Impacto:** `shared/types/lis.types.ts` (queries de pending), `backend/src/{controllers/lis-analytics.routes,
+services/lis-analytics.service,repositories/lis-analytics.repository}.ts`; `frontend/src/pages/ActiveSearch.tsx`,
+`lib/pdf/active-search.ts`; API_CONTRACTS §10.2, PAGES §16.

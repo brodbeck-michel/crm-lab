@@ -3,12 +3,13 @@ import type { LisBudgetAgeBand, PendingLisBudget } from '@crm-lab/shared';
 import { LIS_BUDGET_AGE_BANDS } from '@crm-lab/shared';
 import { useLisBudgetsFilters, useLisBudgetsPending, useLisBudgetsPendingSummary } from '@/api/lis';
 import { useAuthStore } from '@/stores/auth.store';
+import { useUIStore } from '@/stores/ui.store';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Select, useToast } from '@/components/ui';
 import { DataTable, MoneyDisplay, Pagination } from '@/components/shared';
 import type { DataTableColumn } from '@/components/shared';
-import { KpiCard } from '@/components/lis/KpiCard';
 import { AgeBadge } from '@/components/lis/AgeBadge';
+import { isPeriodInvalid, PeriodFilter } from '@/components/lis/PeriodFilter';
 import { formatIsoDay } from '@/lib/format';
 import { generateActiveSearchPdf } from '@/lib/pdf/active-search';
 
@@ -22,25 +23,39 @@ const AGE_BAND_LABEL: Record<LisBudgetAgeBand, string> = {
 /**
  * Busca Ativa (`/active-search`) — orçamentos com requisição mas sem
  * pagamento recebido (PAGES.md §16). Fonte: `GET /lis-budgets/pending` +
- * `GET /lis-budgets/pending/summary` (§10.2).
+ * `GET /lis-budgets/pending/summary` (§10.2). Recorta pelo período
+ * compartilhado com Resultados e Conferência (D-117, D-334).
  */
 export default function ActiveSearch() {
   const theme = useAuthStore((s) => s.theme);
   const tenant = useAuthStore((s) => s.tenant);
+  const lisFilters = useUIStore((s) => s.lisFilters);
+  const setLisFilters = useUIStore((s) => s.setLisFilters);
   const { toast } = useToast();
 
   const [page, setPage] = useState(1);
   const [attendantId, setAttendantId] = useState('');
   const [ageBand, setAgeBand] = useState<LisBudgetAgeBand | ''>('');
 
+  const periodInvalid = isPeriodInvalid(lisFilters);
+  const period = { startDate: lisFilters.startDate, endDate: lisFilters.endDate };
+
   const { data: filters } = useLisBudgetsFilters();
-  const { data: summary } = useLisBudgetsPendingSummary({ attendantId: attendantId || undefined });
-  const { data, isLoading } = useLisBudgetsPending({
-    page,
-    limit: 20,
-    attendantId: attendantId || undefined,
-    ageBand: ageBand || undefined,
-  });
+  // O summary não aparece na tela (D-334), mas é a base do PDF.
+  const { data: summary } = useLisBudgetsPendingSummary(
+    { ...period, attendantId: attendantId || undefined },
+    { enabled: !periodInvalid },
+  );
+  const { data, isLoading } = useLisBudgetsPending(
+    {
+      page,
+      limit: 20,
+      ...period,
+      attendantId: attendantId || undefined,
+      ageBand: ageBand || undefined,
+    },
+    { enabled: !periodInvalid },
+  );
 
   async function handleExportPdf() {
     if (!summary) return;
@@ -48,7 +63,12 @@ export default function ActiveSearch() {
       // PDF cobre a fila inteira (não só a página atual) — refaz o fetch
       // sem paginação, mesmo filtro, para não exportar 20 de 34 linhas.
       const full = await import('@/api/lis').then((m) =>
-        m.lisBudgetsApi.pending({ limit: 1000, attendantId: attendantId || undefined, ageBand: ageBand || undefined }),
+        m.lisBudgetsApi.pending({
+          limit: 1000,
+          ...period,
+          attendantId: attendantId || undefined,
+          ageBand: ageBand || undefined,
+        }),
       );
       await generateActiveSearchPdf({
         summary,
@@ -58,6 +78,7 @@ export default function ActiveSearch() {
         filters: {
           attendantName: filters?.attendants.find((a) => a.id === attendantId)?.name ?? null,
           ageBand: ageBand || null,
+          period,
         },
       });
     } catch {
@@ -82,24 +103,20 @@ export default function ActiveSearch() {
         title="Busca Ativa"
         description="Orçamentos com requisição emitida, sem pagamento recebido."
         actions={
-          <Button variant="primary" onClick={handleExportPdf} disabled={!summary}>
+          <Button variant="primary" onClick={handleExportPdf} disabled={!summary || periodInvalid}>
             Exportar PDF
           </Button>
         }
       />
 
       <div className="space-y-lg">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-lg">
-          <KpiCard label="Total em aberto" value={summary?.total.count} variant="number" />
-          {LIS_BUDGET_AGE_BANDS.map((band) => (
-            <KpiCard
-              key={band}
-              label={AGE_BAND_LABEL[band]}
-              value={summary?.byAgeBand[band]?.count}
-              variant="number"
-            />
-          ))}
-        </div>
+        <PeriodFilter
+          value={period}
+          onChange={(next) => {
+            setLisFilters({ ...lisFilters, ...next });
+            setPage(1);
+          }}
+        />
 
         <div className="grid max-w-[560px] grid-cols-1 gap-md sm:grid-cols-2">
           <Select

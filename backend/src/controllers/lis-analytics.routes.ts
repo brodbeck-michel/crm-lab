@@ -5,7 +5,7 @@
  *   GET /lis-budgets                 Conferência (listagem paginada)
  *   GET /lis-budgets/summary         Resultados
  *   GET /lis-budgets/pending         Busca Ativa
- *   GET /lis-budgets/pending/summary Busca Ativa (cartões)
+ *   GET /lis-budgets/pending/summary Busca Ativa (agregado do PDF)
  *   GET /lis-budgets/filters         seletores das 3 telas
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
@@ -55,6 +55,8 @@ const summaryQuerySchema = z.object({
 });
 
 const pendingQuerySchema = z.object({
+  startDate: dateParam.optional(),
+  endDate: dateParam.optional(),
   attendantId: z.uuid().optional(),
   ageBand: z.enum(LIS_BUDGET_AGE_BANDS as [string, ...string[]]).optional(),
   page: z.coerce.number().int().min(1).optional(),
@@ -62,6 +64,8 @@ const pendingQuerySchema = z.object({
 });
 
 const pendingSummaryQuerySchema = z.object({
+  startDate: dateParam.optional(),
+  endDate: dateParam.optional(),
   attendantId: z.uuid().optional(),
 });
 

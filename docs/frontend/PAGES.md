@@ -1513,11 +1513,12 @@ quem a home (§14) não responde. Fonte: `GET /lis-budgets` (§10.2).
 Fila de cobrança: orçamentos com requisição emitida mas **sem pagamento recebido**. Fonte:
 `GET /lis-budgets/pending` + `GET /lis-budgets/pending/summary` (§10.2).
 
-- **Cartões de topo:** total (contagem + valor) e um `KpiCard` por faixa de idade
-  (`byAgeBand`: `0-7`, `8-15`, `16-30`, `30+`) — as **4 chaves sempre presentes**, `0`/`0` onde
-  não há linha (a tela não omite cartão de faixa vazia).
-- **Filtros:** atendente + `ageBand` (clicar num cartão de faixa filtra a tabela por ela —
-  atalho de UX, não substitui o seletor).
+- **Sem cartões de topo** (D-334). Os cartões de contagem por faixa saíram: com o backlog antigo
+  a faixa `30+` concentrava quase tudo e eles não respondiam a nenhuma pergunta da gestão.
+- **Período (D-334):** `PeriodFilter` no topo, o **mesmo período** de Resultados e Conferência
+  (`useUIStore.lisFilters`, D-117), abrindo nos últimos 30 dias. Recorta pela data de emissão
+  (`issuedOn`), a mesma que conta os dias em aberto. Período inválido não dispara a busca.
+- **Filtros:** atendente + `ageBand`, locais da tela (não entram no estado compartilhado).
 - **Tabela:** número, paciente, convênio principal, valor total, atendente, nº requisição, valor
   da requisição, emitido em, `AgeBadge` (dias em aberto + a faixa, com tom crescente de urgência
   conforme a faixa — nunca cor isolada sem o número ao lado, D5 acessibilidade).
@@ -1540,8 +1541,8 @@ Dois cuidados que valem mais que o layout:
 
 - **O PDF cobre a fila inteira, não a página atual.** A tela pagina de 20 em 20; exportar sem
   refazer o fetch mandaria 20 de 148 linhas para quem for cobrar.
-- **Os filtros ligados vão impressos** no topo. Uma lista filtrada por atendente que não diz
-  isso vira, na mão de quem recebe, "a carteira inteira".
+- **Os filtros ligados vão impressos** no topo, o período sempre (D-334). Uma lista filtrada por
+  atendente que não diz isso vira, na mão de quem recebe, "a carteira inteira".
 
 ### 17. Vendas (`/sales`) — TENANT_ROLES, recorte por atendente (D-112)
 

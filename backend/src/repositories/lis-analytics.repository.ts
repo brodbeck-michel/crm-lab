@@ -523,8 +523,16 @@ function ageBandCase(column = 'days_open'): string {
   END`;
 }
 
-export interface PendingListCriteria {
+/**
+ * Recorte comum da Busca Ativa. `period` ausente = fila inteira em aberto;
+ * presente = `issued_on` da linha da requisição dentro do intervalo (D-334).
+ */
+export interface PendingFilter {
   attendantId?: string;
+  period?: { startDate: string; endDate: string };
+}
+
+export interface PendingListCriteria extends PendingFilter {
   ageBand?: LisBudgetAgeBand;
   page: number;
   limit: number;
@@ -562,12 +570,23 @@ function toPendingBudget(row: PendingRow): PendingLisBudget {
   };
 }
 
-/** `req` deduplicado por requisição, com `days_open`/`age_band` computados. */
-function pendingCte(attendantId: string | undefined, params: unknown[]): string {
+/**
+ * `req` deduplicado por requisição, com `days_open`/`age_band` computados.
+ * O período entra DEPOIS do dedupe (D-334): filtrar antes deixaria entrar uma
+ * requisição cujo orçamento "irmão" fora do período já foi pago.
+ */
+function pendingCte(filter: PendingFilter, params: unknown[]): string {
   const where = ['tenant_id = $1', 'requisition_number IS NOT NULL'];
-  if (attendantId !== undefined) {
-    params.push(attendantId);
+  if (filter.attendantId !== undefined) {
+    params.push(filter.attendantId);
     where.push(`attendant_id = $${params.length}`);
+  }
+  const pendingWhere = ['COALESCE(paid_value, 0) = 0'];
+  if (filter.period !== undefined) {
+    params.push(filter.period.startDate, filter.period.endDate);
+    pendingWhere.push(
+      `issued_on BETWEEN $${params.length - 1}::date AND $${params.length}::date`,
+    );
   }
   return `req AS (
      SELECT DISTINCT ON (requisition_number)
@@ -581,7 +600,7 @@ function pendingCte(attendantId: string | undefined, params: unknown[]): string 
    pending AS (
      SELECT *, (CURRENT_DATE - issued_on) AS days_open
        FROM req
-      WHERE COALESCE(paid_value, 0) = 0
+      WHERE ${pendingWhere.join(' AND ')}
    )`;
 }
 
@@ -591,7 +610,7 @@ export async function listPendingBudgets(
   criteria: PendingListCriteria,
 ): Promise<{ rows: PendingLisBudget[]; total: number }> {
   const params: unknown[] = [tenantId];
-  const cte = pendingCte(criteria.attendantId, params);
+  const cte = pendingCte(criteria, params);
 
   const outerWhere: string[] = [];
   if (criteria.ageBand !== undefined) {
@@ -630,10 +649,10 @@ export interface PendingSummaryRow {
 export async function getPendingSummary(
   tx: DbTx,
   tenantId: string,
-  attendantId: string | undefined,
+  filter: PendingFilter,
 ): Promise<PendingSummaryRow> {
   const params: unknown[] = [tenantId];
-  const cte = pendingCte(attendantId, params);
+  const cte = pendingCte(filter, params);
 
   const result = await tx.query<{
     age_band: string;

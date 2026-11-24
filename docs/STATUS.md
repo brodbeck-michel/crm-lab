@@ -4432,3 +4432,19 @@ BUSINESS_RULES §15b (fórmulas), API_CONTRACTS §13 (`portfolios.abc`) e §14b,
   Testes `Reports/Visitation.spec`, `lib/csv.spec`, `Portfolios.spec`, `route-config.spec`.
 - **Pendências/riscos:** médico sem classe (nulo até o recálculo diário) fica à parte, não vira C (D-333
   item 6); período usa UTC−3 fixo (sem horário de verão, como o resto do sistema).
+
+### 🔄 CRMLAB-197 — Busca Ativa: filtro de período e sem os cartões de topo (2026-11-23, aguardando validação)
+
+Branch `feature/CRMLAB-197-busca-ativa-filtro-data`. Contrato: D-334, API_CONTRACTS §10.2, PAGES §16.
+A regra de quem entra na fila (requisição sem pagamento) não muda; orçamento sem requisição segue no
+CRMLAB-196 (Backlog, aguardando a gestão).
+- **shared:** `startDate`/`endDate` opcionais em `ListPendingLisBudgetsQuery` e `PendingLisBudgetsSummaryQuery`.
+- **api:** `GET /lis-budgets/pending` e `/pending/summary` aceitam o período. Sem datas, fila inteira
+  (como antes); com datas, recorte por `issued_on` **depois** do dedupe por requisição. Testes novos em
+  `tests/lis/lis-analytics.spec.ts` (sem datas, com datas na lista e no summary, irmão pago fora do
+  período, validação).
+- **ui:** `/active-search` com o `PeriodFilter` compartilhado (`lisFilters`, D-117), sem os `KpiCard` de
+  topo; PDF imprime o período. Resultados e o PDF Executivo continuam com a carteira inteira em aberto.
+  Testes `ActiveSearch.spec`.
+- Resolve a pendência "Busca ativa não é do período" (seção de 2026-09-22) para a tela; no PDF Executivo
+  ela continua sem recorte por decisão (D-334 item 6).

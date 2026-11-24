@@ -92,6 +92,26 @@ function isAgeBand(value: string | undefined): value is LisBudgetAgeBand {
   return value !== undefined && (LIS_BUDGET_AGE_BANDS as readonly string[]).includes(value);
 }
 
+/**
+ * Recorte da Busca Ativa (D-334): sem nenhuma data, fila inteira; com pelo
+ * menos uma, o período resolve como nas outras rotas do LIS.
+ */
+function pendingFilter(
+  query: { attendantId?: string; startDate?: string; endDate?: string },
+  today: Date,
+): lisAnalyticsRepo.PendingFilter {
+  const hasPeriod = Boolean(query.startDate) || Boolean(query.endDate);
+  const period = hasPeriod
+    ? resolvePeriod({ startDate: query.startDate, endDate: query.endDate }, today)
+    : undefined;
+  return {
+    ...(query.attendantId !== undefined ? { attendantId: query.attendantId } : {}),
+    ...(period !== undefined
+      ? { period: { startDate: period.startDate, endDate: period.endDate } }
+      : {}),
+  };
+}
+
 export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAnalyticsService {
   const { db, cache } = deps;
   const now = deps.now ?? ((): Date => new Date());
@@ -219,7 +239,7 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
         });
       }
       const criteria: lisAnalyticsRepo.PendingListCriteria = {
-        ...(query.attendantId !== undefined ? { attendantId: query.attendantId } : {}),
+        ...pendingFilter(query, now()),
         ...(query.ageBand !== undefined ? { ageBand: query.ageBand } : {}),
         page: clampInt(query.page, DEFAULT_PAGE, 1, MAX_PAGE),
         limit: clampInt(query.limit, DEFAULT_LIMIT, 1, MAX_LIMIT),
@@ -244,7 +264,7 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
     ): Promise<PendingLisBudgetsSummary> {
       assertManagerOrAdmin(ctx);
       return db.withTenant(ctx.tenantId, (tx) =>
-        lisAnalyticsRepo.getPendingSummary(tx, ctx.tenantId, query.attendantId),
+        lisAnalyticsRepo.getPendingSummary(tx, ctx.tenantId, pendingFilter(query, now())),
       );
     },
 

@@ -11,6 +11,7 @@ import { querySuccess } from '@/test/query-mocks';
 import { ToastProvider } from '@/components/ui';
 import ActiveSearch from './ActiveSearch';
 import * as lisApi from '@/api/lis';
+import { defaultLisFilters, useUIStore } from '@/stores/ui.store';
 
 vi.mock('@/api/lis', async () => {
   const actual = await vi.importActual('@/api/lis');
@@ -78,21 +79,42 @@ function renderPage() {
 describe('ActiveSearch (/active-search)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useUIStore.setState({ lisFilters: defaultLisFilters() });
     useLisBudgetsPending.mockReturnValue(pendingResult());
     useLisBudgetsPendingSummary.mockReturnValue(querySuccess(summary));
     useLisBudgetsFilters.mockReturnValue(querySuccess(filters));
   });
 
-  it('mostra as 4 faixas sempre, mesmo com contagem zero', () => {
+  it('não tem mais os cartões de topo (D-334)', () => {
     renderPage();
 
-    expect(screen.getByText('Total em aberto')).toBeInTheDocument();
-    // Os mesmos rótulos também aparecem como opção do `Select` de faixa —
-    // `getAllByText` confirma o KpiCard sem depender de ser o único no DOM.
-    expect(screen.getAllByText('0-7 dias').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('8-15 dias').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('16-30 dias').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('30+ dias').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Total em aberto')).not.toBeInTheDocument();
+  });
+
+  it('busca a fila e o summary com o período compartilhado (D-117, D-334)', () => {
+    useUIStore.setState({
+      lisFilters: { startDate: '2026-10-01', endDate: '2026-10-31', attendantId: '', insuranceId: '' },
+    });
+    renderPage();
+
+    expect(useLisBudgetsPending).toHaveBeenCalledWith(
+      expect.objectContaining({ startDate: '2026-10-01', endDate: '2026-10-31' }),
+      { enabled: true },
+    );
+    expect(useLisBudgetsPendingSummary).toHaveBeenCalledWith(
+      expect.objectContaining({ startDate: '2026-10-01', endDate: '2026-10-31' }),
+      { enabled: true },
+    );
+  });
+
+  it('período inválido não dispara a busca', () => {
+    useUIStore.setState({
+      lisFilters: { startDate: '2026-10-31', endDate: '2026-10-01', attendantId: '', insuranceId: '' },
+    });
+    renderPage();
+
+    expect(useLisBudgetsPending).toHaveBeenLastCalledWith(expect.anything(), { enabled: false });
+    expect(screen.getByRole('button', { name: 'Exportar PDF' })).toBeDisabled();
   });
 
   it('lista a fila ordenada por dias em aberto, com AgeBadge por linha', async () => {

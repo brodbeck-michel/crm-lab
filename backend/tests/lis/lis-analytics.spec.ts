@@ -368,6 +368,66 @@ describe('GET /lis-budgets/pending — Busca Ativa', () => {
   });
 });
 
+describe('GET /lis-budgets/pending — periodo (D-334)', () => {
+  async function seedPendingAcrossPeriod(): Promise<void> {
+    await insertBudget(tenantA.id, { number: 'OLD', issuedOn: '2026-07-10', requisitionNumber: 'REQ-OLD', paidValue: 0 });
+    await insertBudget(tenantA.id, { number: 'IN1', issuedOn: '2026-08-05', requisitionNumber: 'REQ-IN1', paidValue: 0, value1: 200 });
+    await insertBudget(tenantA.id, { number: 'IN2', issuedOn: '2026-08-20', requisitionNumber: 'REQ-IN2', paidValue: 0, value1: 300 });
+    await insertBudget(tenantA.id, { number: 'NEW', issuedOn: '2026-09-02', requisitionNumber: 'REQ-NEW', paidValue: 0 });
+  }
+
+  it('sem datas devolve a fila inteira, como antes', async () => {
+    await seedPendingAcrossPeriod();
+
+    const list = await app.agent.get(`${BASE}/pending`).set(app.auth(managerA));
+    expect((list.body as ListPendingLisBudgetsResponse).budgets).toHaveLength(4);
+
+    const summary = await app.agent.get(`${BASE}/pending/summary`).set(app.auth(managerA));
+    expect((summary.body as PendingLisBudgetsSummary).total.count).toBe(4);
+  });
+
+  it('com startDate/endDate recorta por issuedOn, na lista e no summary', async () => {
+    await seedPendingAcrossPeriod();
+    const qs = '?startDate=2026-08-01&endDate=2026-08-31';
+
+    const list = await app.agent.get(`${BASE}/pending${qs}`).set(app.auth(managerA));
+    expect(list.status).toBe(200);
+    const body = list.body as ListPendingLisBudgetsResponse;
+    expect(body.budgets.map((b) => b.number).sort()).toEqual(['IN1', 'IN2']);
+    expect(body.pagination.total).toBe(2);
+
+    const summary = await app.agent.get(`${BASE}/pending/summary${qs}`).set(app.auth(managerA));
+    const summaryBody = summary.body as PendingLisBudgetsSummary;
+    expect(summaryBody.total).toEqual({ count: 2, value: 500 });
+  });
+
+  it('requisicao paga por um orcamento fora do periodo nao volta como pendente', async () => {
+    // Mesmo REQ: o orcamento no periodo esta com 0, o "irmao" fora do periodo foi pago.
+    await insertBudget(tenantA.id, { number: 'A1', issuedOn: '2026-08-10', requisitionNumber: 'REQ-X', paidValue: 0 });
+    await insertBudget(tenantA.id, {
+      number: 'A2', issuedOn: '2026-07-01', requisitionNumber: 'REQ-X', paidValue: 400, paidOn: '2026-07-02',
+    });
+
+    const list = await app.agent
+      .get(`${BASE}/pending?startDate=2026-08-01&endDate=2026-08-31`)
+      .set(app.auth(managerA));
+    expect((list.body as ListPendingLisBudgetsResponse).budgets).toHaveLength(0);
+  });
+
+  it('endDate antes de startDate e VALIDATION_ERROR', async () => {
+    const res = await app.agent
+      .get(`${BASE}/pending?startDate=2026-08-31&endDate=2026-08-01`)
+      .set(app.auth(managerA));
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+
+    const summary = await app.agent
+      .get(`${BASE}/pending/summary?startDate=31-08-2026`)
+      .set(app.auth(managerA));
+    expect(summary.status).toBe(400);
+  });
+});
+
 describe('GET /lis-budgets/filters', () => {
   it('so lista atendentes/convenios que aparecem em algum lis_budgets do tenant', async () => {
     const attendantId = await insertAttendant(tenantA.id, 'Maria');

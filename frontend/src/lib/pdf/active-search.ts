@@ -36,7 +36,12 @@ export interface ActiveSearchPdfInput {
   brandName: string;
   theme?: Pick<Theme, 'accent' | 'logoUrl'> | null;
   /** Filtros ligados na tela, para o PDF não mentir sobre o próprio recorte. */
-  filters?: { attendantName?: string | null; ageBand?: LisBudgetAgeBand | null };
+  filters?: {
+    attendantName?: string | null;
+    ageBand?: LisBudgetAgeBand | null;
+    /** D-334: período da tela, por data de emissão. Ausente = fila inteira. */
+    period?: { startDate: string; endDate: string } | null;
+  };
 }
 
 const BAND_LABEL: Record<LisBudgetAgeBand, string> = {
@@ -68,6 +73,11 @@ export async function generateActiveSearchPdf(input: ActiveSearchPdfInput): Prom
   // O recorte da tela precisa estar impresso: uma lista filtrada por atendente
   // que não diz isso vira, na mão de quem recebe, "a carteira inteira".
   const applied: string[] = [];
+  if (filters?.period) {
+    applied.push(
+      `Emitidos de ${formatIsoDay(filters.period.startDate)} a ${formatIsoDay(filters.period.endDate)}`,
+    );
+  }
   if (filters?.attendantName) applied.push(`Atendente: ${filters.attendantName}`);
   if (filters?.ageBand) applied.push(`Dias em aberto: ${BAND_LABEL[filters.ageBand]}`);
   y = paragraph(doc, y, `Filtros: ${applied.length ? applied.join('  ·  ') : 'nenhum'}`, 9);

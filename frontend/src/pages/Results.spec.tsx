@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -21,6 +21,7 @@ import * as reportsApi from '@/api/reports';
 import * as salesApi from '@/api/sales';
 import * as commissionApi from '@/api/commission-settings';
 import * as funnelRulesApi from '@/api/funnel-rules';
+import { generateDoctorRevenueExcel } from '@/lib/excel/doctor-revenue-report';
 import { DEFAULT_FUNNEL_RULES, type FunnelRules } from '@crm-lab/shared';
 
 vi.mock('@/api/lis', async () => {
@@ -44,6 +45,10 @@ vi.mock('@/pages/Visitation/visitation-access', async () => {
     useVisitationResponsibles: vi.fn(() => ({ seesAll: true, responsibles: [{ id: 'rep-1', name: 'Fátima' }] })),
   };
 });
+
+vi.mock('@/lib/excel/doctor-revenue-report', () => ({
+  generateDoctorRevenueExcel: vi.fn(() => Promise.resolve()),
+}));
 
 vi.mock('@/api/reports', async () => {
   const actual = await vi.importActual('@/api/reports');
@@ -321,6 +326,23 @@ describe('Results (/results)', () => {
     expect(screen.getByText('Carol')).toBeInTheDocument();
     // % Comissão do badge vem de commissionBudgetPct
     expect(screen.getByText('% Comissão: 2%')).toBeInTheDocument();
+  });
+
+  it('faturamento por médico: Excel sai com as linhas e a ordem da tela (CRMLAB-199)', async () => {
+    signIn('manager');
+    renderPage();
+
+    const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
+    // Ordena por "Em requisição" do menor para o maior (2 cliques) e exporta.
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Exportar em Excel' }));
+
+    await waitFor(() => expect(generateDoctorRevenueExcel).toHaveBeenCalledTimes(1));
+    const [rows, totals, period] = vi.mocked(generateDoctorRevenueExcel).mock.calls[0]!;
+    expect(rows.map((r) => r.requisitionValue)).toEqual([50, 300, 800]);
+    expect(totals).toEqual(doctorRevenue.totals);
+    expect(period).toEqual({ startDate: defaultLisFilters().startDate, endDate: defaultLisFilters().endDate });
   });
 
   it('detalhe por atendente ordena pelo cabeçalho (CRMLAB-199)', async () => {

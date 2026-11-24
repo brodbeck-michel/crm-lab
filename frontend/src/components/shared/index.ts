@@ -8,7 +8,7 @@ export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 export { ImageLightbox } from './ImageLightbox';
 export type { ImageLightboxProps } from './ImageLightbox';
-export { DataTable } from './DataTable';
+export { DataTable, sortRows } from './DataTable';
 export type { DataTableProps, DataTableColumn, DataTableSort, DataTableSortDirection } from './DataTable';
 export { Pagination } from './Pagination';
 export type { PaginationProps } from './Pagination';

@@ -46,6 +46,8 @@ export interface DataTableProps<T> {
   minWidth?: number;
   /** Ordem inicial (coluna com `sortValue`). Sem ela, as linhas ficam na ordem recebida. */
   defaultSort?: DataTableSort;
+  /** Avisa a tela quando a ordem muda (ex.: exportar na ordem da tela). */
+  onSortChange?: (sort: DataTableSort) => void;
 }
 
 const collator = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
@@ -89,6 +91,7 @@ export function DataTable<T>({
   emptyMessage = 'Nenhum registro ainda',
   minWidth = 720,
   defaultSort,
+  onSortChange,
 }: DataTableProps<T>) {
   const [sort, setSort] = useState<DataTableSort | undefined>(defaultSort);
   const sortedRows = useMemo(() => {
@@ -99,13 +102,16 @@ export function DataTable<T>({
 
   function toggleSort(column: DataTableColumn<T>) {
     if (!column.sortValue) return;
+    let next: DataTableSort;
     if (sort?.key === column.key) {
-      setSort({ key: column.key, direction: sort.direction === 'asc' ? 'desc' : 'asc' });
-      return;
+      next = { key: column.key, direction: sort.direction === 'asc' ? 'desc' : 'asc' };
+    } else {
+      // 1º clique: texto A–Z, número do maior para o menor (pelo 1º valor não nulo da coluna).
+      const sample = rows.map((row) => column.sortValue?.(row) ?? null).find((v) => v !== null);
+      next = { key: column.key, direction: typeof sample === 'string' ? 'asc' : 'desc' };
     }
-    // 1º clique: texto A–Z, número do maior para o menor (pelo 1º valor não nulo da coluna).
-    const sample = rows.map((row) => column.sortValue?.(row) ?? null).find((v) => v !== null);
-    setSort({ key: column.key, direction: typeof sample === 'string' ? 'asc' : 'desc' });
+    setSort(next);
+    onSortChange?.(next);
   }
 
   if (rows.length === 0) {

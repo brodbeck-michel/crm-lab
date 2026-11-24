@@ -4496,4 +4496,9 @@ Branch `feature/CRMLAB-199-ordenar-colunas`. Pedido do Michel depois do CRMLAB-1
     seletor "Ordenar por" saiu. As linhas "Sem médico" ficam no fim ao ordenar por médico;
   - "Detalhe por atendente": todas as colunas ordenam e a tabela abre na ordem do servidor. A linha
     TOTAL, o PDF e o Excel não mudam.
-- Sem backend nem contrato. Testes: `DataTable.spec.tsx` (+4) e `Results.spec.tsx` (+2, 1 ajustado).
+- **Exportar em Excel** no cartão de faturamento por médico (pedido do Michel ao validar):
+  - gera `faturamento-medicos-<período>.xlsx` no cliente, em `lib/excel/doctor-revenue-report.ts`;
+  - leva as linhas e a ordem da tela (o `DataTable` avisa a ordem por `onSortChange`), com a linha
+    TOTAL.
+- Sem backend nem contrato. Testes: `DataTable.spec.tsx` (+4), `Results.spec.tsx` (+3, 1 ajustado) e
+  `doctor-revenue-report.spec.ts` (+2).

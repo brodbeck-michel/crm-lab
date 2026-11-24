@@ -547,6 +547,8 @@ Anatomia (padrão WhatsApp):
   - A ordenação é feita no cliente, sobre as `rows` recebidas. Linha de total fica fora da tabela,
     com a própria tela.
   - Coluna sem `sortValue` não ordena, e tabela sem nenhum `sortValue` não muda.
+  - `onSortChange(sort)` avisa a tela quando a ordem muda, para exportar na mesma ordem. A função
+    pura `sortRows(rows, sortValue, direction)` é exportada para isso.
 
 ### Pagination
 ```tsx

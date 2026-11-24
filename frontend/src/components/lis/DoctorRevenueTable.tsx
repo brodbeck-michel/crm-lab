@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LIS_DOCTOR_NO_DOCTOR_KEY, type LisDoctorRevenueRow } from '@crm-lab/shared';
 import { useLisDoctorRevenue } from '@/api/lis';
-import { Select } from '@/components/ui';
-import { DataTable, MoneyDisplay } from '@/components/shared';
-import type { DataTableColumn } from '@/components/shared';
+import { Button, Select, useToast } from '@/components/ui';
+import { DataTable, MoneyDisplay, sortRows } from '@/components/shared';
+import type { DataTableColumn, DataTableSort } from '@/components/shared';
+import { generateDoctorRevenueExcel } from '@/lib/excel/doctor-revenue-report';
 import { useVisitationResponsibles } from '@/pages/Visitation/visitation-access';
+
+const DEFAULT_SORT: DataTableSort = { key: 'paidValue', direction: 'desc' };
 
 export interface DoctorRevenueTableProps {
   period: { startDate: string; endDate: string };
@@ -35,7 +38,10 @@ function doctorLabel(row: LisDoctorRevenueRow): { name: string; detail: string; 
 export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorRevenueTableProps) {
   const navigate = useNavigate();
   const { responsibles } = useVisitationResponsibles();
+  const { toast } = useToast();
   const [responsibleId, setResponsibleId] = useState('');
+  // Espelha a ordem do `DataTable` para o Excel sair na ordem da tela (CRMLAB-199).
+  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
 
   const { data, isLoading } = useLisDoctorRevenue(
     { ...period, insuranceId, responsibleId: responsibleId || undefined },
@@ -112,6 +118,17 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
     },
   ];
 
+  async function handleExportExcel() {
+    if (!totals || rows.length === 0) return;
+    const column = columns.find((c) => c.key === sort.key);
+    const ordered = column?.sortValue ? sortRows(rows, column.sortValue, sort.direction) : rows;
+    try {
+      await generateDoctorRevenueExcel(ordered, totals, period);
+    } catch {
+      toast('Não foi possível gerar o Excel.', { tone: 'attention' });
+    }
+  }
+
   return (
     <section
       aria-label="Faturamento por médico solicitante"
@@ -136,6 +153,14 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
               ]}
             />
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={rows.length === 0}
+          >
+            Exportar em Excel
+          </Button>
         </div>
       </div>
 
@@ -143,7 +168,8 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
         columns={columns}
         rows={rows}
         rowKey={(row) => row.doctorKey ?? 'sem-medico'}
-        defaultSort={{ key: 'paidValue', direction: 'desc' }}
+        defaultSort={DEFAULT_SORT}
+        onSortChange={setSort}
         onRowClick={(row) => {
           if (row.doctorId) navigate(`/visitation/doctors/${row.doctorId}`);
         }}

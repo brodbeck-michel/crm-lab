@@ -28,6 +28,7 @@ vi.mock('@/api/doctors', () => ({
   doctorsApi: {
     list: vi.fn(),
     get: vi.fn(),
+    revenue: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     inactivate: vi.fn(),
@@ -54,6 +55,7 @@ vi.mock('@/api/conversations', () => ({
 
 const getMock = vi.mocked(doctorsApi.get);
 const timelineMock = vi.mocked(doctorsApi.timeline);
+const revenueMock = vi.mocked(doctorsApi.revenue);
 const createInteractionMock = vi.mocked(doctorsApi.createInteraction);
 const updateInteractionMock = vi.mocked(doctorsApi.updateInteraction);
 const deleteInteractionMock = vi.mocked(doctorsApi.deleteInteraction);
@@ -194,6 +196,11 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     vi.clearAllMocks();
     getMock.mockResolvedValue(julia);
     timelineMock.mockResolvedValue(page([ligacao, visita]));
+    revenueMock.mockResolvedValue({
+      matched: true, windowStart: '2025-11-24', windowEnd: '2026-11-24',
+      requisitionCount: 31, requisitionValue: 7420.1, paidCount: 28, paidValue: 6980,
+      lastRequisitionOn: '2026-11-20',
+    });
     assigneesMock.mockResolvedValue({ assignees: [{ id: 'u-ana', name: 'Ana Gestora', role: 'manager' }] });
     specialtiesMock.mockResolvedValue({ specialties: [] });
     downloadAttachmentMock.mockRejectedValue(new Error('sem rede no teste'));
@@ -214,6 +221,28 @@ describe('DoctorProfile (/visitation/doctors/:id)', () => {
     expect(screen.getByText('Ana Gestora')).toBeInTheDocument();
     expect(screen.getByText('Prefere material impresso')).toBeInTheDocument();
     expect(getMock).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('faturamento do LIS em 12 meses (CRMLAB-198, D-336)', async () => {
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Faturamento (LIS) — últimos 12 meses' });
+    expect(within(section).getByText('31')).toBeInTheDocument();
+    expect(within(section).getByText(/Última requisição em 20\/11\/2026/)).toBeInTheDocument();
+    expect(within(section).getByText(/Base da curva ABC/)).toBeInTheDocument();
+    expect(revenueMock).toHaveBeenCalledWith('doc-1');
+  });
+
+  it('faturamento sem CRM no cadastro explica o vínculo e oferece editar', async () => {
+    revenueMock.mockResolvedValue({
+      matched: false, windowStart: '2025-11-24', windowEnd: '2026-11-24',
+      requisitionCount: 0, requisitionValue: 0, paidCount: 0, paidValue: 0, lastRequisitionOn: null,
+    });
+    renderPage();
+
+    const section = await screen.findByRole('region', { name: 'Faturamento (LIS)' });
+    expect(within(section).getByText(/ligado ao médico pelo CRM \+ UF/)).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Editar' })).toBeInTheDocument();
   });
 
   it('linha do tempo com visita e registro manual, na ordem do servidor', async () => {

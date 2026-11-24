@@ -1,5 +1,5 @@
 /**
- * Curva ABC dos medicos (SCHEMA.md §51 — CRMLAB-188, D-328 item 9). So SQL;
+ * Curva ABC dos medicos (SCHEMA.md §51 — CRMLAB-188, D-328 item 9; base pelo LIS desde a D-336). So SQL;
  * o Pareto e do `DoctorAbcService` (`classifyAbc` de `@crm-lab/shared`).
  *
  * `listTenantsWithDoctors` e a UNICA funcao chamada com `withoutTenant()`
@@ -8,6 +8,7 @@
  */
 import type { DoctorAbcClass } from '@crm-lab/shared';
 import type { DbTx } from '../db/types.js';
+import { DOCTOR_MATCH, doctorOfRequisitionCte } from './lis-doctor-revenue.repository.js';
 
 export async function listTenantsWithDoctors(tx: DbTx): Promise<string[]> {
   const result = await tx.query<{ tenant_id: string }>(
@@ -17,22 +18,35 @@ export async function listTenantsWithDoctors(tx: DbTx): Promise<string[]> {
 }
 
 /**
- * Base de cada medico do tenant: soma de `total_price` das propostas `ganho`
- * fechadas desde `windowStart`. Medico sem venda vem com 0.
- * `closed_at` e `TIMESTAMP` (sem fuso) gravado em UTC: o ISO com `Z` vira o
- * mesmo relogio UTC no cast.
+ * Base de cada medico do tenant (D-336 item 7, substitui a do D-328 item 9): o RECEBIDO no LIS
+ * desde `windowStart` — `paid_value` da dedupe por requisicao (mesma dos KPIs), `paid_on` na
+ * janela — das requisicoes casadas ao cadastro por CRM + UF (`DOCTOR_MATCH`). Medico sem CRM/UF
+ * ou sem requisicao paga vem com 0.
  */
-export async function computeBases(tx: DbTx, windowStart: Date): Promise<Map<string, number>> {
+export async function computeBases(
+  tx: DbTx,
+  tenantId: string,
+  windowStart: Date,
+): Promise<Map<string, number>> {
   const result = await tx.query<{ id: string; base: unknown }>(
-    `SELECT d.id, COALESCE(SUM(p.total_price), 0) AS base
+    `WITH ${doctorOfRequisitionCte('$1')},
+     paid AS (
+       SELECT requisition_number, paid_value
+         FROM (
+           SELECT DISTINCT ON (requisition_number) requisition_number, paid_value, paid_on
+             FROM lis_budgets
+            WHERE tenant_id = $1 AND requisition_number IS NOT NULL
+            ORDER BY requisition_number, paid_value DESC
+         ) r
+        WHERE paid_on >= $2::date AND COALESCE(paid_value, 0) > 0
+     )
+     SELECT d.id, COALESCE(SUM(paid.paid_value), 0) AS base
        FROM doctors d
-       LEFT JOIN proposals p
-         ON p.doctor_id = d.id
-        AND p.tenant_id = d.tenant_id
-        AND p.status = 'ganho'
-        AND p.closed_at >= $1::timestamp
+       LEFT JOIN doc ON ${DOCTOR_MATCH}
+       LEFT JOIN paid ON paid.requisition_number = doc.requisition_number
+      WHERE d.tenant_id = $1
       GROUP BY d.id`,
-    [windowStart.toISOString()],
+    [tenantId, windowStart.toISOString().slice(0, 10)],
   );
   return new Map(result.rows.map((row) => [row.id, Number(row.base)]));
 }

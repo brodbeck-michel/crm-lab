@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-24 (CRMLAB-198: médico solicitante na sync do Bitlab)
+**Última atualização:** 2026-11-24 (CRMLAB-198: médico solicitante e faturamento por médico)
 
 ---
 
@@ -4449,7 +4449,7 @@ CRMLAB-196 (Backlog, aguardando a gestão).
 - Resolve a pendência "Busca ativa não é do período" (seção de 2026-09-22) para a tela; no PDF Executivo
   ela continua sem recorte por decisão (D-334 item 6).
 
-### 🔄 CRMLAB-198 — Médico solicitante na sync do Bitlab (2026-11-24, aguardando validação)
+### 🔄 CRMLAB-198 — Médico solicitante na sync do Bitlab + faturamento por médico (2026-11-24, aguardando validação)
 
 Branch `feature/CRMLAB-198-medico-solicitante` (D-335). Origem: a Thaisy (Santé) quer o faturamento por
 médico solicitante. Em 24/11/2026 o Bitlab pôs na API v1 `MEDICO_SOLICITANTE`, `CONSELHO_MEDICO`,
@@ -4464,7 +4464,20 @@ SERVICES §24/§24.1, SCHEMA §26/§53.
   - o upsert grava só quando a linha é da API, então a planilha não apaga o médico;
   - `selectRows`/`knownBudgets` aceitam a linha atrasada quando a requisição ou o médico mudaram. A
     API não manda a data da requisição, então o `changedAt` não anda.
-- Não muda o contrato HTTP nem `shared/types`. O relatório por médico fica para o próximo card.
+- **Faturamento por médico (D-336, escopo ampliado no mesmo card):**
+  - **contrato:** `GET /lis-budgets/by-doctor` e `GET /doctors/:id/revenue` (API_CONTRACTS §10.2/§13),
+    tipos em `shared/types/{lis,doctor}.types.ts`;
+  - **SQL:** `repositories/lis-doctor-revenue.repository.ts`, o único lugar que liga `lis_budgets` a
+    `doctors`;
+  - **telas:** cartão "Faturamento por médico solicitante" em Resultados
+    (`components/lis/DoctorRevenueTable.tsx`, com filtro de representante e ordenação), top 10 no PDF
+    Executivo e seção "Faturamento (LIS)" na ficha do médico;
+  - **curva ABC:** a base passa a ser o recebido no LIS em 12 meses.
+  - **Em prod:** deploy → carga do histórico → `POST /doctors/abc/recalculate`.
+  - **CRM "1"** é o coringa do laboratório (sem médico ou pedido da enfermagem, confirmado em 24/11):
+    vai para uma linha só, "Sem médico (CRM 1)", e não liga ao cadastro.
 - **Pendente depois do deploy:** carga única do histórico desde 01/01/2026, recuando a marca d'água em prod. O passo a passo está no D-335 item 6.
 - **Verde em 24/11/2026:** typecheck dos 4 workspaces; backend 184 arquivos / 2873 testes (+5 do card:
   `bitlab-client` normalização, `lis-spreadsheet` consolidação, `lis-sync` linha atrasada ×3).
+- **Consulta só de leitura ao Bitlab (24/11, 35 linhas):** os 4 campos vêm sempre (texto, `null` sem
+  requisição). Uma requisição tem um médico só. Conselhos CRM e CRN, UF SC.

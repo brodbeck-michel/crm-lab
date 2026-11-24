@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -6,6 +6,7 @@ import type {
   ExecutiveReport,
   LisBudgetsFilters,
   LisBudgetsSummary,
+  LisDoctorRevenueResponse,
   LisImport,
   SalesSummary,
   UserRole,
@@ -30,8 +31,17 @@ vi.mock('@/api/lis', async () => {
     useLisBudgetsSummary: vi.fn(),
     useLisImportsLatest: vi.fn(),
     useLisBudgetsPendingSummary: vi.fn(() => ({ data: undefined })),
+    useLisDoctorRevenue: vi.fn(),
     useImportLisSpreadsheet: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
     usePurgeLisBudgets: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  };
+});
+
+vi.mock('@/pages/Visitation/visitation-access', async () => {
+  const actual = await vi.importActual('@/pages/Visitation/visitation-access');
+  return {
+    ...actual,
+    useVisitationResponsibles: vi.fn(() => ({ seesAll: true, responsibles: [{ id: 'rep-1', name: 'Fátima' }] })),
   };
 });
 
@@ -65,6 +75,30 @@ function rulesWithSpreadsheet(enabled: boolean): FunnelRules {
 const useLisBudgetsFilters = vi.mocked(lisApi.useLisBudgetsFilters);
 const useLisBudgetsSummary = vi.mocked(lisApi.useLisBudgetsSummary);
 const useLisImportsLatest = vi.mocked(lisApi.useLisImportsLatest);
+const useLisDoctorRevenue = vi.mocked(lisApi.useLisDoctorRevenue);
+
+/** Faturamento por médico (CRMLAB-198, D-336). */
+const doctorRevenue: LisDoctorRevenueResponse = {
+  period: { startDate: '2026-08-01', endDate: '2026-08-31' },
+  rows: [
+    {
+      doctorKey: 'crm:CRM:12345:SC', doctorName: 'Dra. Ana Souza', council: 'CRM', crm: '12345', uf: 'SC',
+      identified: true, doctorId: 'doc-1', responsibleName: 'Fátima',
+      requisitionCount: 4, requisitionValue: 800, paidCount: 3, paidValue: 600,
+    },
+    {
+      doctorKey: 'no-doctor', doctorName: null, council: null, crm: null, uf: null,
+      identified: false, doctorId: null, responsibleName: null,
+      requisitionCount: 1, requisitionValue: 50, paidCount: 1, paidValue: 50,
+    },
+    {
+      doctorKey: null, doctorName: null, council: null, crm: null, uf: null,
+      identified: false, doctorId: null, responsibleName: null,
+      requisitionCount: 2, requisitionValue: 300, paidCount: 2, paidValue: 350,
+    },
+  ],
+  totals: { requisitionCount: 7, requisitionValue: 1150, paidCount: 6, paidValue: 1000 },
+};
 const useExecutiveReport = vi.mocked(reportsApi.useExecutiveReport);
 const useSalesSummary = vi.mocked(salesApi.useSalesSummary);
 const useCommissionSettings = vi.mocked(commissionApi.useCommissionSettings);
@@ -209,6 +243,7 @@ describe('Results (/results)', () => {
     useExecutiveReport.mockReturnValue(querySuccess(executiveReport));
     useSalesSummary.mockReturnValue(querySuccess(salesSummary));
     useCommissionSettings.mockReturnValue(querySuccess(commissionSettings));
+    useLisDoctorRevenue.mockReturnValue(querySuccess(doctorRevenue));
     // A tela chama o hook duas vezes: período atual e período anterior
     // (deltaPct). Distingue pelo `startDate` da query, não pela ordem da
     // chamada — `mockReturnValueOnce` esgotaria após a 1ª renderização e
@@ -294,6 +329,43 @@ describe('Results (/results)', () => {
 
     expect(await screen.findByRole('button', { name: /comissão em pdf/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /comissão em excel/i })).toBeInTheDocument();
+  });
+
+  it('faturamento por médico: linhas, CRM, sem médico, % e total (CRMLAB-198)', async () => {
+    signIn('manager');
+    renderPage();
+
+    const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
+    expect(within(card).getByText('Dra. Ana Souza')).toBeInTheDocument();
+    expect(within(card).getByText('CRM 12345/SC')).toBeInTheDocument();
+    expect(within(card).getByText('Sem médico (CRM 1)')).toBeInTheDocument();
+    expect(within(card).getByText('Sem médico informado')).toBeInTheDocument();
+    expect(within(card).getByText('60,0%')).toBeInTheDocument();
+    expect(within(card).getByText(/7 requisições/)).toBeInTheDocument();
+  });
+
+  it('faturamento por médico: escolher representante manda responsibleId (CRMLAB-198)', async () => {
+    signIn('manager');
+    renderPage();
+
+    const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
+    fireEvent.change(within(card).getByLabelText('Representante'), { target: { value: 'rep-1' } });
+    expect(useLisDoctorRevenue).toHaveBeenCalledWith(
+      expect.objectContaining({ responsibleId: 'rep-1' }),
+      expect.anything(),
+    );
+  });
+
+  it('faturamento por médico: ordenar por "Em requisição" reordena as linhas', async () => {
+    signIn('manager');
+    renderPage();
+
+    const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
+    fireEvent.change(within(card).getByLabelText('Ordenar por'), { target: { value: 'requisitionValue' } });
+    const names = within(card)
+      .getAllByText(/Dra\. Ana Souza|Sem médico \(CRM 1\)|Sem médico informado/)
+      .map((el) => el.textContent);
+    expect(names).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
   });
 
   it('só admin vê "Limpar base"', async () => {

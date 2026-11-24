@@ -3,9 +3,11 @@
  *
  *  - `classifyAbc` (Pareto puro): casos de borda — empate, concentracao,
  *    sem venda, total zero;
- *  - `DoctorAbcService`: base = propostas `ganho` dos ultimos 12 meses por
- *    `doctor_id`; outros estagios, venda velha e proposta sem medico nao
- *    contam; isolamento de tenant; agendador (`runScheduledTick`);
+ *  - `DoctorAbcService`: base = RECEBIDO no LIS dos ultimos 12 meses, das
+ *    requisicoes casadas ao medico por CRM + UF (D-336 item 7); requisicao
+ *    nao paga, paga fora da janela, sem medico, de outro conselho ou com CRM
+ *    curto nao contam; proposta ganha nao conta mais; isolamento de tenant;
+ *    agendador (`runScheduledTick`);
  *  - `POST /doctors/abc/recalculate`: gestor/admin, audit.
  */
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -84,34 +86,61 @@ beforeEach(async () => {
   attendantA = await createUser({ tenantId: tenantA.id, role: 'attendant', db });
 });
 
-async function doctor(tenantId: string, name: string): Promise<string> {
+let crmSeq = 1000;
+
+/** Medico com CRM/UF unicos (o vinculo com o LIS e por CRM + UF, D-335/D-336). */
+async function doctor(tenantId: string, name: string, crm: string | null = String((crmSeq += 1))): Promise<string> {
   const result = await db.withoutTenant((tx) =>
-    tx.query<{ id: string }>('INSERT INTO doctors (tenant_id, name) VALUES ($1, $2) RETURNING id', [tenantId, name]),
+    tx.query<{ id: string }>(
+      'INSERT INTO doctors (tenant_id, name, crm, crm_uf) VALUES ($1, $2, $3, $4) RETURNING id',
+      [tenantId, name, crm, crm === null ? null : 'SC'],
+    ),
   );
   return result.rows[0]?.id as string;
 }
 
-/** Proposta com medico, estagio, total e data de fechamento. */
+let reqSeq = 0;
+
+/**
+ * Requisicao do LIS paga (D-336 item 7: a base da curva e o RECEBIDO no LIS). O medico vem do
+ * cadastro `doctorId` (CRM + UF dele); `null` = requisicao sem medico. `paidOn: null` = nao paga.
+ */
 async function sale(
   tenantId: string,
   doctorId: string | null,
-  totalPrice: number,
-  options: { status?: string; closedAt?: string } = {},
+  paidValue: number,
+  options: { paidOn?: string | null; council?: string; crm?: string } = {},
 ): Promise<void> {
-  const status = options.status ?? 'ganho';
-  const proposal = await createProposal({
-    tenantId,
-    status: status as 'ganho',
-    totalPrice,
-    db,
+  reqSeq += 1;
+  await db.withoutTenant(async (tx) => {
+    const imp = await tx.query<{ id: string }>(
+      `INSERT INTO lis_imports (tenant_id, kind, file_name, status) VALUES ($1, 'sync', NULL, 'completed') RETURNING id`,
+      [tenantId],
+    );
+    const doc = doctorId
+      ? (await tx.query<{ name: string; crm: string; crm_uf: string }>('SELECT name, crm, crm_uf FROM doctors WHERE id = $1', [doctorId])).rows[0]
+      : undefined;
+    const paidOn = options.paidOn === undefined ? '2026-10-01' : options.paidOn;
+    await tx.query(
+      `INSERT INTO lis_budgets (tenant_id, number, issued_on, insurance_1, value_1, requisition_number,
+         requisition_value, paid_value, paid_on, import_id, requesting_doctor_name, requesting_doctor_council,
+         requesting_doctor_crm, requesting_doctor_uf)
+       VALUES ($1, $2, '2026-09-01', 'PARTICULAR', $3, $4, $3, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        tenantId,
+        `ORC-${reqSeq}`,
+        paidValue,
+        `01-${reqSeq}`,
+        paidOn === null ? null : paidValue,
+        paidOn,
+        imp.rows[0]?.id,
+        doc?.name ?? null,
+        doc ? (options.council ?? 'CRM') : null,
+        doc ? (options.crm ?? doc.crm) : null,
+        doc?.crm_uf ?? null,
+      ],
+    );
   });
-  await db.withoutTenant((tx) =>
-    tx.query('UPDATE proposals SET doctor_id = $2, closed_at = $3::timestamp WHERE id = $1', [
-      proposal.id,
-      doctorId,
-      options.closedAt ?? '2026-10-01T10:00:00Z',
-    ]),
-  );
 }
 
 async function abcOf(id: string) {
@@ -130,30 +159,43 @@ function service() {
 }
 
 describe('DoctorAbcService.recalculateTenant', () => {
-  it('base = propostas ganho dos últimos 12 meses; resto não conta', async () => {
+  it('base = recebido no LIS dos últimos 12 meses (D-336); resto não conta', async () => {
     const top = await doctor(tenantA.id, 'Dr. Top');
     const mid = await doctor(tenantA.id, 'Dr. Mid');
     const none = await doctor(tenantA.id, 'Dr. Sem venda');
+    const noCrm = await doctor(tenantA.id, 'Dr. Sem CRM', null);
     await sale(tenantA.id, top, 800);
     await sale(tenantA.id, top, 100.5);
     await sale(tenantA.id, mid, 99.5);
-    // não contam: perdida, aberta, fora da janela, sem médico
-    await sale(tenantA.id, mid, 5000, { status: 'perdido' });
-    await sale(tenantA.id, mid, 5000, { status: 'negociacao' });
-    await sale(tenantA.id, mid, 5000, { closedAt: '2025-11-01T00:00:00Z' });
+    // não contam: não paga, paga fora da janela, sem médico, outro conselho, proposta ganha
+    await sale(tenantA.id, mid, 5000, { paidOn: null });
+    await sale(tenantA.id, mid, 5000, { paidOn: '2025-11-01' });
     await sale(tenantA.id, null, 5000);
+    await sale(tenantA.id, mid, 5000, { council: 'CRO' });
+    const proposal = await createProposal({ tenantId: tenantA.id, status: 'ganho', totalPrice: 9000, db });
+    await db.withoutTenant((tx) =>
+      tx.query('UPDATE proposals SET doctor_id = $2, closed_at = now() WHERE id = $1', [proposal.id, none]),
+    );
 
     const result = await service().recalculateTenant(tenantA.id, NOW);
     expect(result).toEqual({
       calculatedAt: NOW.toISOString(),
       windowStart: '2025-11-21T12:00:00.000Z',
-      doctors: 3,
-      counts: { A: 1, B: 1, C: 1 },
+      doctors: 4,
+      counts: { A: 1, B: 1, C: 2 },
     });
     expect(await abcOf(top)).toEqual({ cls: 'A', base: 900.5 });
     // antes dele: 900.5 / 1000 = 90% -> B
     expect(await abcOf(mid)).toEqual({ cls: 'B', base: 99.5 });
     expect(await abcOf(none)).toEqual({ cls: 'C', base: 0 });
+    expect(await abcOf(noCrm)).toEqual({ cls: 'C', base: 0 });
+  });
+
+  it('CRM curto (provisório, CRM "1" do Bitlab) não casa com o cadastro', async () => {
+    const one = await doctor(tenantA.id, 'Dr. Um', '1');
+    await sale(tenantA.id, one, 300);
+    await service().recalculateTenant(tenantA.id, NOW);
+    expect(await abcOf(one)).toEqual({ cls: 'C', base: 0 });
   });
 
   it('empate na base dá a mesma classe', async () => {

@@ -7382,7 +7382,7 @@ saber quais médicos trazem receita. Escopo aprovado pelo dono do produto em 21/
    deprecado e só leitura na API). O contrato de escrita troca `specialty`/`contactName` por
    `specialtyId`/`secretaryName` (o único consumidor é o próprio frontend, no mesmo commit).
 9. **Curva ABC automática**, sem edição manual:
-   - **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
+   - **(Base substituída pela D-336 item 7: hoje é o recebido no LIS.)** **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
      transição). Base = soma de `total_price` das propostas `ganho` com `closed_at` nos **últimos 12
      meses**, por `doctor_id`. `total_price` e não o líquido do LIS: é o número que o CRM controla
      (regra §1) e existe em toda proposta.
@@ -7851,3 +7851,69 @@ pagamento igual. Card CRMLAB-198; o relatório fica para um card seguinte.
 lis-spreadsheet}.ts`; `backend/src/repositories/{lis-import,lis-sync-settings}.repository.ts`;
 `backend/src/services/lis-sync.service.ts`; SERVICES §24/§24.1, SCHEMA §26/§53. Sem mudança de
 contrato HTTP nem de `shared/types` (o relatório trará os tipos).
+
+### D-336: Faturamento por médico solicitante — Resultados, PDF, ficha do médico e curva ABC pelo LIS
+**Contexto:** continuação do CRMLAB-198 (D-335). Com o médico da requisição em `lis_budgets`, a
+Thaisy (Santé) quer o faturamento por médico, no molde do relatório por convênio. Escopo e escolhas
+do dono do produto em 24/11/2026: bloco em Resultados (tabela completa) com top 10 no PDF Executivo,
+as duas janelas, faturamento na ficha do médico, curva ABC pelo faturamento e filtro por
+representante. Tudo vai para prod junto com a D-335.
+
+A consulta só de leitura ao Bitlab em 24/11 (35 linhas) mostrou:
+- os 4 campos vêm sempre como texto, e `null` sem requisição;
+- toda requisição tem um único médico;
+- conselhos CRM e CRN (nutricionista);
+- 8 requisições com CRM `1`, o coringa do laboratório (sem médico ou pedido da enfermagem; item 2).
+
+**Decisão:**
+1. **Quem é o médico de uma requisição:** é o médico de qualquer linha de `lis_budgets` daquela
+   requisição que tenha o médico preenchido. Vale a linha atualizada mais recentemente
+   (`updated_at`). A linha que dá os valores continua sendo a da dedupe por requisição (maior
+   `paid_value`, BUSINESS_RULES §11.2). Assim os totais do relatório batem com os KPIs de Resultados.
+2. **Chave do médico no relatório:**
+   - **identificado** = número com pelo menos `LIS_DOCTOR_MIN_CRM_DIGITS` (3) dígitos e UF. A chave
+     é conselho + número + UF;
+   - **coringa do Bitlab:** número com menos de 3 dígitos. É o CRM `1`, que o laboratório usa
+     quando não há pedido médico ou quando quem pediu foi a enfermagem (confirmado pelo dono do
+     produto com o Santé em 24/11/2026). Tudo isso vira **uma linha só**, `doctorKey: "no-doctor"`
+     ("Sem médico (CRM 1)"), sem nome nem CRM, porque são várias pessoas que não são médicos;
+   - **sem médico:** requisição sem médico nenhum (as de antes da carga do histórico, D-335 item 6)
+     vira uma linha só, com `doctorKey: null` ("Sem médico informado").
+
+   O nome exibido do médico identificado é o mais recente da chave.
+3. **Vínculo com o cadastro (D-335 item 5):** só médico identificado, com conselho `CRM` ou
+   `null`, casado por `doctors.crm`/`crm_uf` do mesmo tenant. A linha casada traz `doctorId` e o
+   representante responsável (`doctors.responsible_user_id`).
+4. **`GET /lis-budgets/by-doctor`** (gestor/admin, API_CONTRACTS §10.2): todas as linhas do período,
+   sem top N e sem o mínimo de `MIN_ORC_RANKING`. É uma prestação de contas, como o detalhe por
+   atendente (D-122), não um ranking. As duas janelas seguem o molde de `byInsurance`:
+   - **requisição** (`requisitionCount`/`requisitionValue`) é a dedupe dos orçamentos **emitidos**
+     no período, a mesma do KPI "Em Requisição" (D-125);
+   - **recebido** (`paidCount`/`paidValue`) é a dedupe de todas as requisições, com `paid_on` no
+     período e `paid_value > 0`, a mesma do KPI "Recebido".
+
+   Os filtros `insuranceId`/`attendantId` são os do summary. O `responsibleId` deixa só os médicos
+   cadastrados daquela carteira; não identificados e "sem médico" saem. A ordem é `paidValue` desc,
+   depois `requisitionValue` desc, depois nome. A resposta traz `totals`, que é a soma das linhas.
+   Sem cache: o vínculo depende de `doctors`, que o import do LIS não invalida.
+5. **Resultados** (PAGES §14): um bloco "Faturamento por médico solicitante" depois do detalhe por
+   atendente, com tabela, filtro de representante e ordenação (recebido, em requisição, requisições).
+   Ele respeita o filtro de convênio da tela. Linha com `doctorId` abre a ficha. **PDF
+   Executivo:** top 10 por recebido numa tabela própria, depois dos convênios. A tabela usa os mesmos
+   dados da tela, sem o filtro de representante, e não chama o backend de novo.
+6. **Ficha do médico** (PAGES §22b): **`GET /doctors/:id/revenue`**, com o mesmo escopo da ficha
+   (o representante só vê a carteira dele; fora dela é `NOT_FOUND`). Mostra requisições, valor em
+   requisição e recebido dos **últimos 12 meses**, a mesma janela da curva ABC, e a data da última
+   requisição. Médico sem CRM + UF no cadastro responde `matched: false` com zeros, e a tela explica
+   que o vínculo é pelo CRM + UF.
+7. **Curva ABC pelo faturamento (substitui a base do D-328 item 9):** a base é o **recebido no LIS**
+   (`paid_value` deduplicado, `paid_on` nos últimos 12 meses) das requisições do médico, casado como
+   no item 3. Pareto, empate, base 0 = C e agenda não mudam. Médico sem CRM + UF fica com base 0,
+   portanto C. `proposals.doctor_id` continua existindo, só não entra mais na conta. **Ordem em
+   prod:** deploy → carga do histórico (D-335 item 6) → `POST /doctors/abc/recalculate`. Sem a carga,
+   quase todo médico cairia em C até o histórico chegar.
+**Impacto:** `shared/types/{lis,doctor}.types.ts`; `backend/src/repositories/{lis-doctor-revenue,
+doctor-abc}.repository.ts`, `services/{lis-analytics,doctor,doctor-abc}.service.ts`,
+`controllers/{lis-analytics,doctor}.routes.ts`; `frontend/src/pages/{Results,Visitation/DoctorProfile}.tsx`,
+`lib/pdf/executive-report.ts`; API_CONTRACTS §10.2/§13, PAGES §14/§22b, SERVICES §20/§30.
+Inventário de isolamento: mais 1 rota (`GET /doctors/:id/revenue`; as rotas `/lis-budgets` não entram nele).

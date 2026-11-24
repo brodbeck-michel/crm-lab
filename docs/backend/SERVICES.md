@@ -1336,6 +1336,8 @@ export interface LisAnalyticsService {
   listPending(ctx: TenantContext, query: ListPendingLisBudgetsQuery): Promise<ListPendingLisBudgetsResponse>;
   getPendingSummary(ctx: TenantContext, query: PendingLisBudgetsSummaryQuery): Promise<PendingLisBudgetsSummary>;
   getFilters(ctx: TenantContext): Promise<LisBudgetsFilters>;
+  // CRMLAB-198 (D-336): faturamento por médico, sem cache; SQL em lis-doctor-revenue.repository.ts
+  getByDoctor(ctx: TenantContext, query: LisDoctorRevenueQuery): Promise<LisDoctorRevenueResponse>;
 }
 ```
 
@@ -1944,6 +1946,14 @@ export interface DoctorAbcService {
   runScheduledTick(): Promise<void>;                                  // main.ts, 24 h; nunca lança
 }
 ```
+
+**CRMLAB-198 (D-336):**
+- A base da curva ABC (`DoctorAbcRepository.computeBases`) passa a ser o **recebido no LIS** nos
+  últimos 12 meses, com as requisições casadas ao médico por CRM + UF.
+- `DoctorService.getRevenue(ctx, id)` atende `GET /doctors/:id/revenue`, com o mesmo `load` de
+  escopo da ficha.
+- As duas usam o mesmo SQL de "médico da requisição" de `lis-doctor-revenue.repository.ts`, o
+  mesmo do `LisAnalyticsService.getByDoctor`. É o único lugar que liga `lis_budgets` a `doctors`.
 
 O `ProposalService` lê `doctors` (id, nome, ativo — do próprio tenant) para validar `doctorId`;
 leitura de apoio, como o responsável acima.

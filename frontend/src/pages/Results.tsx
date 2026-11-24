@@ -4,6 +4,7 @@ import {
   useLisBudgetsFilters,
   useLisBudgetsPendingSummary,
   useLisBudgetsSummary,
+  useLisDoctorRevenue,
   useLisImportsLatest,
 } from '@/api/lis';
 import { useExecutiveReport } from '@/api/reports';
@@ -19,6 +20,7 @@ import { ResultsKpiCard } from '@/components/lis/ResultsKpiCard';
 import { isPeriodInvalid, PeriodFilter, previousPeriod } from '@/components/lis/PeriodFilter';
 import { AttendantRevenueChart } from '@/components/lis/AttendantRevenueChart';
 import { InsuranceDonutChart } from '@/components/lis/InsuranceDonutChart';
+import { DoctorRevenueTable } from '@/components/lis/DoctorRevenueTable';
 import { MonthlySeriesChart } from '@/components/lis/MonthlySeriesChart';
 import { ImportModal } from '@/components/lis/ImportModal';
 import { useEffectiveFunnelRules } from '@/api/funnel-rules';
@@ -136,6 +138,12 @@ export default function Results() {
     { enabled: !periodInvalid },
   );
   const { data: executiveReport } = useExecutiveReport(period, { enabled: !periodInvalid });
+  // Médicos do PDF (D-336 item 5): mesmos dados do cartão, sem o filtro de representante.
+  // É a mesma chave do cartão sem representante — o React Query não pede duas vezes.
+  const { data: doctorRevenue } = useLisDoctorRevenue(
+    { ...period, insuranceId },
+    { enabled: !periodInvalid },
+  );
   const { data: salesSummary } = useSalesSummary(period);
   // O tema vem no login e mora no store — nada de request extra (FRONTEND_BACKEND.md).
   const theme = useAuthStore((s) => s.theme);
@@ -192,6 +200,8 @@ export default function Results() {
             ? null
             : { rows: commissionRows, totals: commissionTotals, settings: commissionSettings },
         pending: pendingSummary ?? null,
+        // Como o comparativo: com filtro de convênio, a seção sai (o PDF é o período inteiro).
+        doctors: insuranceId ? null : (doctorRevenue ?? null),
       });
     } catch {
       toast('Não foi possível gerar o PDF.', { tone: 'attention' });
@@ -422,6 +432,8 @@ export default function Results() {
               </div>
             )}
           </section>
+
+          <DoctorRevenueTable period={period} insuranceId={insuranceId} enabled={!periodInvalid} />
         </>
       )}
 

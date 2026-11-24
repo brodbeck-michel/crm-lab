@@ -293,6 +293,63 @@ export interface LisBudgetsSummary {
   byInsurance: LisInsuranceAgg[];
 }
 
+// ---------------------------------------------------------------------------
+// Faturamento por médico solicitante (CRMLAB-198, D-336) — GET /lis-budgets/by-doctor
+// ---------------------------------------------------------------------------
+
+/**
+ * Mínimo de dígitos do CRM para o médico contar como identificado (D-336 item 2). Abaixo disso é o
+ * coringa do Bitlab — CRM `1` quando não há médico ou quem pediu foi a enfermagem (confirmado pelo
+ * laboratório em 24/11/2026) — e tudo vai para uma linha só, `doctorKey: 'no-doctor'`.
+ */
+export const LIS_DOCTOR_MIN_CRM_DIGITS = 3;
+
+/** `doctorKey` da linha do coringa do Bitlab (CRM `1`). */
+export const LIS_DOCTOR_NO_DOCTOR_KEY = 'no-doctor';
+
+export interface LisDoctorRevenueQuery {
+  startDate?: string;
+  endDate?: string;
+  attendantId?: string;
+  insuranceId?: string;
+  /** Só médicos cadastrados desta carteira (`doctors.responsible_user_id`). */
+  responsibleId?: string;
+}
+
+export interface LisDoctorRevenueTotals {
+  /** Requisições dos orçamentos EMITIDOS no período (dedupe por requisição, D-125). */
+  requisitionCount: number;
+  requisitionValue: number;
+  /** Requisições PAGAS no período (dedupe por requisição, `paid_value > 0`). */
+  paidCount: number;
+  paidValue: number;
+}
+
+export interface LisDoctorRevenueRow extends LisDoctorRevenueTotals {
+  /**
+   * `crm:<conselho>:<número>:<uf>` (médico identificado), `no-doctor` (coringa do Bitlab: CRM `1`,
+   * sem médico ou pedido da enfermagem) ou `null` (requisição sem os campos do médico).
+   */
+  doctorKey: string | null;
+  doctorName: string | null;
+  council: string | null;
+  crm: string | null;
+  uf: string | null;
+  /** CRM com `LIS_DOCTOR_MIN_CRM_DIGITS`+ dígitos e UF. */
+  identified: boolean;
+  /** Cadastro (CRMLAB-86) casado por CRM + UF, conselho `CRM` ou vazio. */
+  doctorId: string | null;
+  responsibleName: string | null;
+}
+
+export interface LisDoctorRevenueResponse {
+  period: LisBudgetsPeriod;
+  /** Todas as linhas do período: `paidValue` desc, `requisitionValue` desc, nome. */
+  rows: LisDoctorRevenueRow[];
+  /** Soma das linhas. */
+  totals: LisDoctorRevenueTotals;
+}
+
 export type LisBudgetAgeBand = '0-7' | '8-15' | '16-30' | '30+';
 
 export const LIS_BUDGET_AGE_BANDS: readonly LisBudgetAgeBand[] = ['0-7', '8-15', '16-30', '30+'];

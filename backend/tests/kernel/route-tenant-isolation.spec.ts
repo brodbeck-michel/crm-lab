@@ -682,6 +682,15 @@ const LAB_ROUTES: readonly LabRoute[] = [
     addressable: true,
     ownStatus: 200,
   },
+  // CRMLAB-198 (D-336): faturamento do medico no LIS, mesmo escopo da ficha.
+  {
+    name: 'GET /doctors/:id/revenue',
+    method: 'get',
+    path: (l) => `/api/v1/doctors/${l.doctor.id}/revenue`,
+    actor: 'manager',
+    addressable: true,
+    ownStatus: 200,
+  },
   {
     name: 'POST /doctors/:id/interactions',
     method: 'post',
@@ -1741,7 +1750,8 @@ describe('inventario de rotas de laboratorio', () => {
     // CRMLAB-189/D-329 soma 3: `GET /doctors/portfolios`, `POST /doctors/transfer` e `GET /doctors/lookup`.
     // CRMLAB-192/D-332 soma 3: `POST /doctors/:id/comments` e `PATCH|DELETE /doctors/:id/comments/:commentId`.
     // CRMLAB-193/D-333 soma 2: `GET /visitation-reports/summary` e `GET /visitation-reports/stale-doctors`.
-    expect(LAB_ROUTES).toHaveLength(147);
+    // CRMLAB-198/D-336 soma 1: `GET /doctors/:id/revenue`.
+    expect(LAB_ROUTES).toHaveLength(148);
 
     const comId = LAB_ROUTES.filter((route) => route.name.includes('/:'))
       .map((route) => route.name)

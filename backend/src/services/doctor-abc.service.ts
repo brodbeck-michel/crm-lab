@@ -2,8 +2,8 @@
  * DoctorAbcService — curva ABC automatica dos medicos (SERVICES.md §30,
  * CRMLAB-188, D-328 item 9).
  *
- *  - base = soma de `totalPrice` das propostas `ganho` (venda fechada) com
- *    `closedAt` nos ultimos 12 meses, por `doctorId`;
+ *  - base = RECEBIDO no LIS nos ultimos 12 meses, das requisicoes casadas ao
+ *    medico por CRM + UF (D-336 item 7; antes eram as propostas `ganho`);
  *  - Pareto por tenant (`classifyAbc`): A ate 80% do acumulado, B ate 95%,
  *    C o resto e quem nao vendeu;
  *  - grava classe, base e instante no medico (o trigger de `updated_at` ignora);
@@ -51,7 +51,7 @@ export function createDoctorAbcService(deps: DoctorAbcServiceDeps): DoctorAbcSer
     const windowStart = abcWindowStart(now);
     const counts: Record<DoctorAbcClass, number> = { A: 0, B: 0, C: 0 };
     const total = await db.withTenant(tenantId, async (tx) => {
-      const bases = await computeBases(tx, windowStart);
+      const bases = await computeBases(tx, tenantId, windowStart);
       const classes = classifyAbc(bases);
       const rows = [...classes.entries()].map(([id, abcClass]) => {
         counts[abcClass] += 1;

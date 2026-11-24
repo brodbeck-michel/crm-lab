@@ -27,16 +27,32 @@ import {
   watermarkToBitlabDateTime,
   type BitlabClient,
 } from '../lib/bitlab-client.js';
-import { paymentOf, type LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
+import {
+  hasRequestingDoctorFields,
+  paymentOf,
+  REQUESTING_DOCTOR_FIELDS,
+  type LisSpreadsheetRow,
+} from '../lib/lis-spreadsheet.js';
 import { logger } from '../lib/logger.js';
 import {
   LisSyncSettingsRepository,
+  type KnownBudget,
   type LisSyncSettingsView,
 } from '../repositories/lis-sync-settings.repository.js';
 import type { AuditService } from './audit.service.js';
 import type { LisImportService } from './lis-import.service.js';
 
 export const PAGE_SIZE = 500;
+
+/**
+ * Linha da API cuja requisicao ou medico solicitante difere do gravado (D-335 item 4). Linha da
+ * planilha (sem os campos do medico) nunca conta: ela nao escreve o medico.
+ */
+function requisitionOrDoctorChanged(row: LisSpreadsheetRow, stored: KnownBudget): boolean {
+  if (!hasRequestingDoctorFields(row)) return false;
+  if ((row.requisitionNumber ?? null) !== stored.requisitionNumber) return true;
+  return REQUESTING_DOCTOR_FIELDS.some((field) => (row[field] ?? null) !== stored[field]);
+}
 /** Teto de paginas por rodada (D-185 item 2): protege de um `temProxima` que nunca vira false. */
 export const MAX_PAGES = 200;
 
@@ -171,8 +187,10 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
   /**
    * Janela sobreposta (D-304): linha alterada na marca ou depois e "nova" e segue a D-249 (marca
    * que nao andou = nada novo). Linha so de ANTES da marca ja foi lida numa rodada anterior — ou
-   * chegou atrasada: entra so se o orcamento nao existe no CRM, ou se o pagamento dela falta no
-   * extrato ou mudou de situacao (estorno). Linha sem `changedAt` (planilha, teste) conta como nova.
+   * chegou atrasada: entra so se o orcamento nao existe no CRM, se o pagamento dela falta no
+   * extrato ou mudou de situacao (estorno), ou se a requisicao ou o medico solicitante mudou
+   * (D-335: a API nao manda a data da requisicao, entao o `changedAt` nao anda quando ela nasce).
+   * Linha sem `changedAt` (planilha, teste) conta como nova.
    */
   async function selectRows(
     tenantId: string,
@@ -193,7 +211,9 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
     const known = await repo.knownBudgets(tenantId, [...new Set(older.map((r) => r.number.trim()))]);
     const late = older.filter((r) => {
       const number = r.number.trim();
-      if (!known.budgets.has(number)) return true;
+      const stored = known.budgets.get(number);
+      if (stored === undefined) return true;
+      if (requisitionOrDoctorChanged(r, stored)) return true;
       const payment = paymentOf(r);
       if (payment === null) return false;
       return known.payments.get(number)?.get(payment.key) !== payment.status;

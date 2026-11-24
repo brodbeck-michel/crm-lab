@@ -203,6 +203,30 @@ describe('consolidateLisRows (BUSINESS_RULES.md §11.1)', () => {
     expect(consolidateLisRows(rows)).toHaveLength(2);
   });
 
+  it('D-335: o medico vem da representante; sem ele, da outra linha, em bloco', () => {
+    const doctor = {
+      requestingDoctorName: 'Dra. Ana',
+      requestingDoctorCouncil: 'CRM',
+      requestingDoctorCrm: '123',
+      requestingDoctorUf: 'SC',
+    };
+    const noDoctor = {
+      requestingDoctorName: null,
+      requestingDoctorCouncil: null,
+      requestingDoctorCrm: null,
+      requestingDoctorUf: null,
+    };
+    const fromLoser = consolidateLisRows([{ ...make('1', 100), ...doctor }, { ...make('1', 300), ...noDoctor }]);
+    expect(fromLoser[0]).toMatchObject({ value1: 300, ...doctor });
+
+    const other = { ...doctor, requestingDoctorName: 'Dr. Bruno', requestingDoctorCrm: '999' };
+    const fromRep = consolidateLisRows([{ ...make('1', 100), ...other }, { ...make('1', 300), ...doctor }]);
+    expect(fromRep[0]).toMatchObject(doctor);
+
+    // Planilha (sem os campos): continua sem eles, para o upsert nao mexer no gravado.
+    expect(consolidateLisRows([make('1', 100), make('1', 300)])[0]).not.toHaveProperty('requestingDoctorName');
+  });
+
   it('D-126: requisição/pagamento da linha PERDEDORA não pode ser descartado — mescla, não substitui', () => {
     // Mesmo ORÇAMENTO, duas linhas da planilha (ex.: um exame por linha):
     // a de maior total_value NÃO tem requisição/pagamento ainda; a outra,

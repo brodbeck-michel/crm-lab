@@ -1528,8 +1528,10 @@ ao agendador):
     a linha repetida da própria marca é descartada; linha gravada no mesmo segundo da marca volta
     quando a marca andar (D-253);
   - `changedAt` **antes** da marca: entra só se o orçamento não existe em `lis_budgets` ou se o
-    pagamento (`payment_key`) falta no extrato ou mudou de situação
-    (`LisSyncSettingsRepository.knownBudgets`). Log `lis_sync.late_rows` quando entra alguma;
+    pagamento (`payment_key`) falta no extrato ou mudou de situação, ou ainda se a linha é da API e
+    a requisição (`requisition_number`) ou o médico solicitante (os quatro campos) é diferente do
+    gravado (D-335: a API não manda a data da requisição, então o `changedAt` não anda quando ela
+    nasce) (`LisSyncSettingsRepository.knownBudgets`). Log `lis_sync.late_rows` quando entra alguma;
   - nada a gravar = sem `lis_imports`, `received: 0`.
 - `runScheduledTick` roda os tenants **em série**, não em paralelo: é um por laboratório, e
   série não compete com as requisições da tela pelo pool.
@@ -1598,6 +1600,22 @@ schema (helper `money`): API antiga sem eles → `null`, e o líquido cai no bru
 `discountValue{n}`/`surchargeValue{n}`/`payableValue{n}` de `LisSpreadsheetRow`, e o upsert grava
 nas colunas da migração 057 (SCHEMA.md §26). Orçamento antigo ganha os campos quando a sync o
 reenvia — incremental (quando ele muda) ou rodada completa (`mode: 'full'`).
+
+**Médico solicitante (aditivos na v1, desde 24/11/2026, CRMLAB-198, D-335):**
+`MEDICO_SOLICITANTE` (nome), `CONSELHO_MEDICO` (sigla: `CRM`, `CRO`…), `CRM_MEDICO` (número no
+conselho) e `UF_CRM_MEDICO`. Todos são `string | null` e opcionais no schema (helper `text`). No
+Bitlab o médico é da **requisição**: até o orçamento virar requisição os quatro vêm `null`, e cada
+requisição tem um único médico. Criar ou alterar a requisição conta no `tipoData: "alteracao"`, mas
+a data da requisição **não** vem na resposta. Por isso o `changedAt` da linha não a reflete, e a
+janela sobreposta compara a requisição e o médico com o gravado (§24, D-335 item 4). `toLisRow`
+normaliza os campos e os leva para `requestingDoctorName`/`requestingDoctorCouncil`/
+`requestingDoctorCrm`/`requestingDoctorUf` de `LisSpreadsheetRow`:
+- nome com `trim`;
+- conselho em maiúscula;
+- número só com dígitos (`normalizeCrm`), com no máximo 20;
+- UF válida (`isBrazilUf`).
+
+Valor que não passa vira `null`. O upsert grava nas colunas da migração 075 (SCHEMA.md §53).
 
 **Tolerância na borda** (lições da sandbox de 18/09, `Avaliacao_APIs_Bitlab_2026-09-18.md`):
 - Envelope validado com zod. Os campos que usamos são obrigatórios no schema, os desconhecidos

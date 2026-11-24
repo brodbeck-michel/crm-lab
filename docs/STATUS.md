@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-23 (CRMLAB-195: modal de médico avisa e leva até o campo com erro)
+**Última atualização:** 2026-11-24 (CRMLAB-198: médico solicitante na sync do Bitlab)
 
 ---
 
@@ -4448,3 +4448,24 @@ CRMLAB-196 (Backlog, aguardando a gestão).
   Testes `ActiveSearch.spec`.
 - Resolve a pendência "Busca ativa não é do período" (seção de 2026-09-22) para a tela; no PDF Executivo
   ela continua sem recorte por decisão (D-334 item 6).
+
+### 🔄 CRMLAB-198 — Médico solicitante na sync do Bitlab (2026-11-24, aguardando validação)
+
+Branch `feature/CRMLAB-198-medico-solicitante` (D-335). Origem: a Thaisy (Santé) quer o faturamento por
+médico solicitante. Em 24/11/2026 o Bitlab pôs na API v1 `MEDICO_SOLICITANTE`, `CONSELHO_MEDICO`,
+`CRM_MEDICO` e `UF_CRM_MEDICO`. Eles vêm `null` até o orçamento virar requisição. Contrato:
+SERVICES §24/§24.1, SCHEMA §26/§53.
+- **db:** `075_lis_budget_requesting_doctor.sql`: 4 colunas em `lis_budgets` e o índice parcial
+  `(tenant_id, crm, uf)`. Não há `doctor_id`: o vínculo com `doctors` é feito no join da leitura (só
+  conselho CRM ou `null`).
+- **api:**
+  - `bitlab-client` lê e normaliza os campos (dígitos, UF válida, o que não passa vira `null`);
+  - `consolidateLisRows` leva o médico entre as linhas do mesmo orçamento;
+  - o upsert grava só quando a linha é da API, então a planilha não apaga o médico;
+  - `selectRows`/`knownBudgets` aceitam a linha atrasada quando a requisição ou o médico mudaram. A
+    API não manda a data da requisição, então o `changedAt` não anda.
+- Não muda o contrato HTTP nem `shared/types`. O relatório por médico fica para o próximo card.
+- **Pendente depois do deploy:** os orçamentos que já viraram requisição só ganham o médico quando o
+  Bitlab os reenviar. Preencher o histórico é um passo operacional a combinar (D-335 item 6).
+- **Verde em 24/11/2026:** typecheck dos 4 workspaces; backend 184 arquivos / 2873 testes (+5 do card:
+  `bitlab-client` normalização, `lis-spreadsheet` consolidação, `lis-sync` linha atrasada ×3).

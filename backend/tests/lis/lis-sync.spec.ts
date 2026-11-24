@@ -391,6 +391,85 @@ describe('POST /settings/lis-integration/sync', () => {
       expect(await sync(adminA)).toMatchObject({ received: 1 });
       expect((await budgetsOf(tenantA.id))[0]).toEqual({ number: '10', paid_value: 0 });
     });
+
+    describe('requisicao e medico solicitante atrasados (CRMLAB-198, D-335)', () => {
+      const noDoctor = {
+        requestingDoctorName: null,
+        requestingDoctorCouncil: null,
+        requestingDoctorCrm: null,
+        requestingDoctorUf: null,
+      };
+      const doctor = {
+        requestingDoctorName: 'Dra. Ana Souza',
+        requestingDoctorCouncil: 'CRM',
+        requestingDoctorCrm: '12345',
+        requestingDoctorUf: 'SC',
+      };
+
+      async function doctorOf(number: string): Promise<Record<string, string | null> | undefined> {
+        const result = await db.withTenant(tenantA.id, (tx) =>
+          tx.query<Record<string, string | null>>(
+            `SELECT requisition_number, requesting_doctor_name, requesting_doctor_council,
+                    requesting_doctor_crm, requesting_doctor_uf
+               FROM lis_budgets WHERE number = $1`,
+            [number],
+          ),
+        );
+        return result.rows[0];
+      }
+
+      it('virou requisicao com o changedAt antigo: entra e grava o medico; repetida, nao entra', async () => {
+        await configure(adminA, { apiKey: KEY, enabled: true });
+        const budget = row('20', { ...at('2026-10-30 08:00:00'), ...noDoctor });
+        const marker = row('21', { ...at('2026-10-30 09:00:00'), ...noDoctor });
+        bitlab.script = [page([budget, marker], '2026-10-30 09:00:00')];
+        await sync(adminA);
+
+        // O Bitlab devolve o 20 porque a requisicao nasceu, mas o changedAt continua 08:00.
+        const requisition = { ...budget, requisitionNumber: '01-209164', requisitionValue: 100, ...doctor };
+        bitlab.script = [page([requisition, marker], '2026-10-30 09:00:00')];
+        expect(await sync(adminA)).toMatchObject({ received: 1 });
+        expect(await doctorOf('20')).toEqual({
+          requisition_number: '01-209164',
+          requesting_doctor_name: 'Dra. Ana Souza',
+          requesting_doctor_council: 'CRM',
+          requesting_doctor_crm: '12345',
+          requesting_doctor_uf: 'SC',
+        });
+
+        bitlab.script = [page([requisition, marker], '2026-10-30 09:00:00')];
+        expect(await sync(adminA)).toMatchObject({ received: 0, importId: null });
+      });
+
+      it('medico trocado na requisicao: entra e regrava', async () => {
+        await configure(adminA, { apiKey: KEY, enabled: true });
+        const first = row('30', { ...at('2026-10-30 08:00:00'), requisitionNumber: '01-1', ...doctor });
+        const marker = row('31', { ...at('2026-10-30 09:00:00'), ...noDoctor });
+        bitlab.script = [page([first, marker], '2026-10-30 09:00:00')];
+        await sync(adminA);
+
+        const changed = { ...first, requestingDoctorName: 'Dr. Bruno Lima', requestingDoctorCrm: '999' };
+        bitlab.script = [page([changed, marker], '2026-10-30 09:00:00')];
+        expect(await sync(adminA)).toMatchObject({ received: 1 });
+        expect(await doctorOf('30')).toMatchObject({
+          requesting_doctor_name: 'Dr. Bruno Lima',
+          requesting_doctor_crm: '999',
+        });
+      });
+
+      it('linha da planilha (sem os campos) nao apaga o medico gravado pela API', async () => {
+        await configure(adminA, { apiKey: KEY, enabled: true });
+        bitlab.script = [
+          page([row('40', { ...at('2026-10-30 08:00:00'), requisitionNumber: '01-2', ...doctor })], '2026-10-30 08:00:00'),
+        ];
+        await sync(adminA);
+
+        // Mesma linha sem os campos do medico (caminho da planilha) e sem changedAt: entra como nova.
+        bitlab.script = [page([row('40', { requisitionNumber: '01-2' })], '2026-10-30 09:00:00')];
+        await sync(adminA);
+        expect(await doctorOf('40')).toMatchObject({ requesting_doctor_name: 'Dra. Ana Souza', requesting_doctor_uf: 'SC' });
+      });
+    });
   });
 
   it('pagina com falha nao grava nada e nao anda a marca', async () => {

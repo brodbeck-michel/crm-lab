@@ -7789,3 +7789,48 @@ requisição fica no CRMLAB-196. Decisões do dono do produto no card.
 **Impacto:** `shared/types/lis.types.ts` (queries de pending), `backend/src/{controllers/lis-analytics.routes,
 services/lis-analytics.service,repositories/lis-analytics.repository}.ts`; `frontend/src/pages/ActiveSearch.tsx`,
 `lib/pdf/active-search.ts`; API_CONTRACTS §10.2, PAGES §16.
+
+### D-335: Médico solicitante do Bitlab em `lis_budgets` e linha atrasada que muda requisição/médico
+**Contexto:** a Thaisy (Lab Santé) quer o faturamento por médico solicitante, no molde do relatório
+por convênio. Em 24/11/2026 o Bitlab pôs na API de Orçamentos v1, como aditivos,
+`MEDICO_SOLICITANTE`, `CONSELHO_MEDICO`, `CRM_MEDICO` e `UF_CRM_MEDICO`. No Bitlab o médico só
+existe na **requisição**: até o orçamento virar requisição os quatro vêm `null`, cada requisição tem
+**um** médico, e criar ou alterar a requisição passa a contar no `tipoData: "alteracao"`. A API
+**não** manda a data da requisição. Sem ela, o `changedAt` da linha (maior entre emissão, pagamento
+e estorno, D-304) fica antigo, e a janela sobreposta descartava a linha: orçamento conhecido e
+pagamento igual. Card CRMLAB-198; o relatório fica para um card seguinte.
+**Decisão:**
+1. `lis_budgets` ganha `requesting_doctor_name`, `requesting_doctor_council`,
+   `requesting_doctor_crm` e `requesting_doctor_uf` (migração 075, SCHEMA §53), normalizados na borda
+   (`toLisRow`):
+   - nome com `trim`;
+   - conselho em maiúscula;
+   - número só com dígitos (`normalizeCrm`, a mesma dobra de `doctors.crm`), com no máximo
+     20 dígitos;
+   - UF em maiúscula, só se for UF válida (`isBrazilUf`).
+
+   Valor que não passa vira `null`. Não há CHECK no banco: um valor estranho do Bitlab não pode
+   derrubar o chunk.
+2. **Só a API escreve essas colunas.** Linha da planilha (sem os campos) não apaga o médico gravado
+   pela API. Linha da API com os campos `null` grava `null`: é o estado do Bitlab (requisição ainda
+   não existe). Vale a mesma régua do upsert (`total_value` maior ou igual vence, §11.1).
+3. Na consolidação (`consolidateLisRows`), várias linhas do mesmo orçamento (uma por pagamento) levam
+   o médico da linha representante; se ela não tiver médico, usa o da outra linha.
+4. **Linha atrasada (D-304) entra também quando a requisição ou o médico mudaram:**
+   `knownBudgets` devolve, por orçamento, `requisition_number` e os quatro campos do médico. Uma linha
+   da API de antes da marca entra se algum deles for diferente do que está gravado. É o ajuste do
+   nosso lado, combinado com o dono do produto, em vez de pedir ao Bitlab uma `DATA_REQUISICAO`.
+5. **Vínculo com o cadastro de médicos (CRMLAB-86):** é calculado na leitura, sem coluna
+   `doctor_id`. O join é `doctors.crm = requesting_doctor_crm AND doctors.crm_uf =
+   requesting_doctor_uf`, no mesmo tenant, só quando `requesting_doctor_council` é `CRM` ou `null`.
+   `doctors` não guarda o conselho, e um CRO com o mesmo número não é aquele médico. Calcular na
+   leitura faz o médico cadastrado depois já casar com os orçamentos antigos, sem backfill. O índice
+   parcial `idx_lis_budgets_tenant_doctor_crm` atende o join. Este card **não** cria médico
+   automaticamente no cadastro.
+6. **Orçamentos que já viraram requisição antes do deploy** só ganham o médico quando o Bitlab os
+   reenviar: alteração nova, rede diária, ou uma rodada `full`, que hoje nenhuma rota dispara
+   (D-253). Preencher o histórico é um passo operacional combinado à parte, sem código neste card.
+**Impacto:** `backend/migrations/075_lis_budget_requesting_doctor.sql`; `backend/src/lib/{bitlab-client,
+lis-spreadsheet}.ts`; `backend/src/repositories/{lis-import,lis-sync-settings}.repository.ts`;
+`backend/src/services/lis-sync.service.ts`; SERVICES §24/§24.1, SCHEMA §26/§53. Sem mudança de
+contrato HTTP nem de `shared/types` (o relatório trará os tipos).

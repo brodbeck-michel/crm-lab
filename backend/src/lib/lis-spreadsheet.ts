@@ -81,6 +81,32 @@ export interface LisSpreadsheetRow {
   discountValue3?: number | null;
   surchargeValue3?: number | null;
   payableValue3?: number | null;
+  /**
+   * Médico solicitante da requisição (CRMLAB-198, D-335), já normalizado em `toLisRow`. Só a API
+   * tem: ausente (`undefined`) = linha da planilha, que não mexe no gravado; `null` = o Bitlab
+   * ainda não tem requisição (ou o campo não passou na normalização).
+   */
+  requestingDoctorName?: string | null;
+  requestingDoctorCouncil?: string | null;
+  requestingDoctorCrm?: string | null;
+  requestingDoctorUf?: string | null;
+}
+
+/** Campos do médico solicitante (D-335) — a planilha não tem coluna para eles. */
+export const REQUESTING_DOCTOR_FIELDS = [
+  'requestingDoctorName',
+  'requestingDoctorCouncil',
+  'requestingDoctorCrm',
+  'requestingDoctorUf',
+] as const;
+
+/** A linha traz o médico solicitante (veio da API, mesmo que com os campos `null`). */
+export function hasRequestingDoctorFields(row: LisSpreadsheetRow): boolean {
+  return REQUESTING_DOCTOR_FIELDS.some((field) => row[field] !== undefined);
+}
+
+function hasRequestingDoctor(row: LisSpreadsheetRow): boolean {
+  return REQUESTING_DOCTOR_FIELDS.some((field) => (row[field] ?? null) !== null);
 }
 
 /** Campos de desconto/líquido da API (D-278) — a planilha não tem coluna para eles. */
@@ -137,6 +163,7 @@ type SheetField = Exclude<
   | 'cardBrand'
   | 'changedAt'
   | LisDiscountField
+  | (typeof REQUESTING_DOCTOR_FIELDS)[number]
 >;
 
 const FIELD_ALIASES: Record<SheetField, string[]> = {
@@ -465,7 +492,8 @@ export function paymentOf(row: LisSpreadsheetRow): LisPayment | null {
 /**
  * Dedupe por `number` — a de maior `total_value` vence para os campos do
  * orçamento (BUSINESS_RULES.md §11.1); a requisição é mesclada entre as linhas
- * (D-126) e o valor da requisição fica com o maior.
+ * (D-126) e o valor da requisição fica com o maior. O médico solicitante vem da
+ * representante ou, se ela não tiver, da outra linha (D-335).
  *
  * Pagamento NÃO é decidido aqui (CRMLAB-53, D-188 item 5): cada linha é um
  * pagamento, e todos vão em `payments` (sem repetir chave; a última vista
@@ -498,11 +526,19 @@ export function consolidateLisRows(rows: LisSpreadsheetRow[]): LisBudgetInput[] 
 
     const rep = totalValue(row) > totalValue(existing) ? row : existing;
     const other = rep === row ? existing : row;
+    // Médico (D-335 item 3): o da representante; sem ele, o da outra linha, em bloco.
+    const doctor = !hasRequestingDoctor(rep) && hasRequestingDoctor(other) ? other : rep;
     byNumber.set(key, {
       ...rep,
       payments: [],
       requisitionNumber: rep.requisitionNumber ?? other.requisitionNumber,
       requisitionValue: Math.max(rep.requisitionValue ?? 0, other.requisitionValue ?? 0),
+      ...(hasRequestingDoctorFields(doctor) && {
+        requestingDoctorName: doctor.requestingDoctorName ?? null,
+        requestingDoctorCouncil: doctor.requestingDoctorCouncil ?? null,
+        requestingDoctorCrm: doctor.requestingDoctorCrm ?? null,
+        requestingDoctorUf: doctor.requestingDoctorUf ?? null,
+      }),
     });
   }
   return [...byNumber.entries()].map(([key, budget]) => ({

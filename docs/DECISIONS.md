@@ -7829,7 +7829,24 @@ pagamento igual. Card CRMLAB-198; o relatório fica para um card seguinte.
    automaticamente no cadastro.
 6. **Orçamentos que já viraram requisição antes do deploy** só ganham o médico quando o Bitlab os
    reenviar: alteração nova, rede diária, ou uma rodada `full`, que hoje nenhuma rota dispara
-   (D-253). Preencher o histórico é um passo operacional combinado à parte, sem código neste card.
+   (D-253). O histórico é preenchido com **uma carga única, desde 01/01/2026** (período escolhido
+   pelo dono do produto em 24/11/2026). A carga recua a marca d'água em prod, sem código novo: o tique
+   seguinte lê de 01/01/2026 até agora pelo caminho normal, e a marca volta sozinha para o presente
+   no fim da rodada. Orçamento antigo não vira cartão, porque a criação exige `issued_on >=
+   bitlab_proposals_since` (D-196). Só roda **depois** do deploy de prod com a 075. Rodada antes
+   disso traria as linhas sem os campos do médico. Passo a passo, em `/opt/crm-lab`, no `psql` do
+   container `postgres`:
+   1. conferir as colunas `requesting_doctor_*` em `lis_budgets`;
+   2. guardar a marca atual: `SELECT tenant_id, watermark FROM lis_sync_settings WHERE enabled;`;
+   3. recuar só o Santé: `UPDATE lis_sync_settings SET watermark = '2026-01-01 00:00:00' WHERE
+      tenant_id = '<santé>';`;
+   4. acompanhar o log do backend até `lis_sync.completed`. Se vier `lis_sync.failed` com
+      `rejected` (`PERIODO_INVALIDO`: o Bitlab pode ter limite de período, que o manual não
+      informa), voltar a marca guardada no passo 2. A janela sempre termina em "agora", então recuar
+      menos encurta o histórico; outro caminho (consulta do Bitlab por partes) é combinado à parte;
+   5. conferir: `SELECT count(*) FILTER (WHERE requesting_doctor_crm IS NOT NULL),
+      count(*) FILTER (WHERE requisition_number IS NOT NULL) FROM lis_budgets WHERE issued_on >=
+      '2026-01-01';`.
 **Impacto:** `backend/migrations/075_lis_budget_requesting_doctor.sql`; `backend/src/lib/{bitlab-client,
 lis-spreadsheet}.ts`; `backend/src/repositories/{lis-import,lis-sync-settings}.repository.ts`;
 `backend/src/services/lis-sync.service.ts`; SERVICES §24/§24.1, SCHEMA §26/§53. Sem mudança de

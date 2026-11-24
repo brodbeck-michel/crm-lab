@@ -4465,7 +4465,6 @@ SERVICES §24/§24.1, SCHEMA §26/§53.
   - `selectRows`/`knownBudgets` aceitam a linha atrasada quando a requisição ou o médico mudaram. A
     API não manda a data da requisição, então o `changedAt` não anda.
 - Não muda o contrato HTTP nem `shared/types`. O relatório por médico fica para o próximo card.
-- **Pendente depois do deploy:** os orçamentos que já viraram requisição só ganham o médico quando o
-  Bitlab os reenviar. Preencher o histórico é um passo operacional a combinar (D-335 item 6).
+- **Pendente depois do deploy:** carga única do histórico desde 01/01/2026, recuando a marca d'água em prod. O passo a passo está no D-335 item 6.
 - **Verde em 24/11/2026:** typecheck dos 4 workspaces; backend 184 arquivos / 2873 testes (+5 do card:
   `bitlab-client` normalização, `lis-spreadsheet` consolidação, `lis-sync` linha atrasada ×3).

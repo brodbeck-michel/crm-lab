@@ -1,6 +1,7 @@
 import type {
   AnalyticsQuery,
   LisBudgetsSummaryQuery,
+  LisDoctorRevenueQuery,
   ListAttendantsQuery,
   ListAuditQuery,
   ListConversationsQuery,
@@ -186,6 +187,9 @@ export const queryKeys = {
   /** ['lis-budgets', 'pending', 'summary', filters] — cartões por faixa (§16) */
   lisBudgetsPendingSummary: (filters?: PendingLisBudgetsSummaryQuery) =>
     ['lis-budgets', 'pending', 'summary', filters ?? {}] as const,
+  /** ['lis-budgets', 'by-doctor', filters] — faturamento por médico em `/results` (CRMLAB-198, D-336) */
+  lisBudgetsByDoctor: (filters?: LisDoctorRevenueQuery) =>
+    ['lis-budgets', 'by-doctor', filters ?? {}] as const,
   /** ['lis-budgets', 'filters'] — opções dos seletores de atendente/convênio */
   lisBudgetsFilters: () => ['lis-budgets', 'filters'] as const,
 
@@ -228,6 +232,8 @@ export const queryKeys = {
   doctor: (id: string) => ['doctors', 'detail', id] as const,
   /** ['doctors', 'timeline', id] — linha do tempo da ficha (CRMLAB-89, D-261) */
   doctorTimeline: (id: string) => ['doctors', 'timeline', id] as const,
+  /** ['doctors', 'revenue', id] — faturamento no LIS da ficha (CRMLAB-198, D-336) */
+  doctorRevenue: (id: string) => ['doctors', 'revenue', id] as const,
   /** Uma lista filtrada do feed (CRMLAB-192); `doctorTimeline(id)` é o prefixo de todas. */
   doctorTimelineFiltered: (id: string, filter: string) => ['doctors', 'timeline', id, filter] as const,
   /** ['doctors', 'specialties', active] — lista de especialidades (CRMLAB-188, D-328) */

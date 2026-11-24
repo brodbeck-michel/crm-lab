@@ -88,6 +88,15 @@ export interface LisSyncRunOutcome {
   disable?: boolean;
 }
 
+/** Requisição e médico solicitante gravados de um orçamento (D-335 item 4). */
+export interface KnownBudget {
+  requisitionNumber: string | null;
+  requestingDoctorName: string | null;
+  requestingDoctorCouncil: string | null;
+  requestingDoctorCrm: string | null;
+  requestingDoctorUf: string | null;
+}
+
 export class LisSyncSettingsRepository {
   constructor(private readonly db: DbClient) {}
 
@@ -188,23 +197,40 @@ export class LisSyncSettingsRepository {
 
   /** D-186: fora do contexto de tenant, SO `tenant_id`. */
   /**
-   * O que o CRM já tem destes orçamentos: os números em `lis_budgets` e, por orçamento, a situação
-   * de cada pagamento do extrato (`payment_key` -> `status`). Serve para a janela sobreposta só
-   * gravar o que falta (D-304).
+   * O que o CRM já tem destes orçamentos: por número em `lis_budgets`, a requisição e o médico
+   * solicitante gravados (D-335), e, por orçamento, a situação de cada pagamento do extrato
+   * (`payment_key` -> `status`). Serve para a janela sobreposta só gravar o que falta (D-304).
    */
   async knownBudgets(
     tenantId: string,
     numbers: string[],
-  ): Promise<{ budgets: Set<string>; payments: Map<string, Map<string, string>> }> {
-    const budgets = new Set<string>();
+  ): Promise<{ budgets: Map<string, KnownBudget>; payments: Map<string, Map<string, string>> }> {
+    const budgets = new Map<string, KnownBudget>();
     const payments = new Map<string, Map<string, string>>();
     if (numbers.length === 0) return { budgets, payments };
     return this.db.withTenant(tenantId, async (tx) => {
-      const b = await tx.query<{ number: string }>(
-        'SELECT number FROM lis_budgets WHERE tenant_id = $1 AND number = ANY($2::text[])',
+      const b = await tx.query<{
+        number: string;
+        requisition_number: string | null;
+        requesting_doctor_name: string | null;
+        requesting_doctor_council: string | null;
+        requesting_doctor_crm: string | null;
+        requesting_doctor_uf: string | null;
+      }>(
+        `SELECT number, requisition_number, requesting_doctor_name, requesting_doctor_council,
+                requesting_doctor_crm, requesting_doctor_uf
+           FROM lis_budgets WHERE tenant_id = $1 AND number = ANY($2::text[])`,
         [tenantId, numbers],
       );
-      for (const r of b.rows) budgets.add(r.number);
+      for (const r of b.rows) {
+        budgets.set(r.number, {
+          requisitionNumber: r.requisition_number,
+          requestingDoctorName: r.requesting_doctor_name,
+          requestingDoctorCouncil: r.requesting_doctor_council,
+          requestingDoctorCrm: r.requesting_doctor_crm,
+          requestingDoctorUf: r.requesting_doctor_uf,
+        });
+      }
       const p = await tx.query<{ budget_number: string; payment_key: string; status: string }>(
         `SELECT budget_number, payment_key, status FROM lis_budget_payments
           WHERE tenant_id = $1 AND budget_number = ANY($2::text[])`,

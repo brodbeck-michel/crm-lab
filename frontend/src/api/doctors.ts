@@ -6,6 +6,7 @@ import type {
   CreateDoctorRequest,
   CreateDoctorSpecialtyRequest,
   Doctor,
+  DoctorRevenue,
   DoctorAbcRecalculation,
   DoctorInteraction,
   DoctorSpecialty,
@@ -38,6 +39,9 @@ export const doctorsApi = {
   list: (query: ListDoctorsQuery = {}) => http.get<ListDoctorsResponse>('/doctors', query as QueryParams),
 
   get: (id: string) => http.get<Doctor>(`/doctors/${id}`),
+
+  // Faturamento no LIS, 12 meses (CRMLAB-198, D-336).
+  revenue: (id: string) => http.get<DoctorRevenue>(`/doctors/${id}/revenue`),
 
   create: (body: CreateDoctorRequest) => http.post<Doctor>('/doctors', body),
 

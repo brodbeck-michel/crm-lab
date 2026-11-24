@@ -5906,6 +5906,60 @@ opcionais; período com a mesma regra de `GET /lis-budgets/pending`, D-334)
 **Erros:** `VALIDATION_ERROR` (400, data fora do formato ou `endDate` antes de `startDate`),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
+#### GET /lis-budgets/by-doctor (CRMLAB-198, D-336)
+Faturamento por médico solicitante: o bloco de Resultados e o top 10 do PDF Executivo. Gestor/admin
+(o mesmo `router.use` das outras rotas desta seção). Sem cache.
+
+**Query Params:**
+```
+?startDate=2026-11-01&endDate=2026-11-30   // mesma resolução de período do summary (resolvePeriod)
+?insuranceId=<uuid>&attendantId=<uuid>     // mesmos filtros do summary
+?responsibleId=<uuid>                      // só médicos cadastrados dessa carteira (doctors.responsible_user_id)
+```
+
+**Response (200):**
+```json
+{
+  "period": { "startDate": "2026-11-01", "endDate": "2026-11-30" },
+  "rows": [
+    {
+      "doctorKey": "crm:CRM:12345:SC",
+      "doctorName": "Dra. Ana Souza",
+      "council": "CRM", "crm": "12345", "uf": "SC",
+      "identified": true,
+      "doctorId": "uuid", "responsibleName": "Fátima",
+      "requisitionCount": 14, "requisitionValue": 3210.5,
+      "paidCount": 12, "paidValue": 2890
+    },
+    {
+      "doctorKey": null, "doctorName": null, "council": null, "crm": null, "uf": null,
+      "identified": false, "doctorId": null, "responsibleName": null,
+      "requisitionCount": 3, "requisitionValue": 410, "paidCount": 2, "paidValue": 300
+    }
+  ],
+  "totals": { "requisitionCount": 17, "requisitionValue": 3620.5, "paidCount": 14, "paidValue": 3190 }
+}
+```
+- **Requisição** (`requisitionCount`/`requisitionValue`): dedupe por requisição dos orçamentos
+  **emitidos** no período, a mesma do KPI `requisition` do summary (D-125).
+- **Recebido** (`paidCount`/`paidValue`): dedupe de todas as requisições, com `paid_on` no período e
+  `paid_value > 0`, a mesma do KPI `paid`. Um médico pode ter `requisitionCount: 0` e `paidValue > 0`.
+- **Médico da requisição:** o de qualquer linha da requisição com o médico preenchido, a mais
+  recente (`updated_at`).
+- **`identified`:** CRM com pelo menos 3 dígitos e UF. A chave é `crm:<conselho>:<número>:<uf>`.
+- **Coringa do Bitlab:** CRM com menos de 3 dígitos (o CRM `1`, usado quando não há pedido médico
+  ou quando pediu a enfermagem). Uma linha só, `doctorKey: "no-doctor"`, com nome, conselho, CRM e
+  UF `null`.
+- **Sem médico:** `doctorKey: null`, uma linha só.
+- **`doctorId`:** cadastro casado por CRM + UF, só com o conselho `CRM` ou `null` (D-335 item 5).
+  `responsibleName` é o nome do representante da carteira.
+- **Ordem:** `paidValue` desc, `requisitionValue` desc, nome. Sem top N e sem o mínimo de
+  `MIN_ORC_RANKING`.
+- **`totals`:** a soma das linhas devolvidas. Sem `responsibleId`, bate com os KPIs `requisition` e
+  `paid` do summary com os mesmos filtros.
+
+**Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403).
+
 #### GET /lis-budgets/filters
 Opções para os seletores de filtro das telas de Resultados/Conferência/Busca Ativa — evita cada
 tela duplicar a query de "quais atendentes/convênios aparecem nos orçamentos do LIS".
@@ -6530,13 +6584,30 @@ novo (e a coluna antiga `doctors.specialty` deles é atualizada junto — escrit
 
 #### POST /doctors/abc/recalculate (gestor/admin)
 Sem corpo. Recalcula a curva ABC do laboratório agora (o agendador faz o mesmo todo dia — D-328
-item 9). **Response (200):**
+item 9). Desde a D-336 item 7, a base é o **recebido no LIS** nos últimos 12 meses (requisições
+casadas por CRM + UF), não mais as propostas ganhas. **Response (200):**
 ```json
 { "calculatedAt": "2026-11-21T14:02:11.000Z", "windowStart": "2025-11-21T14:02:11.000Z",
   "doctors": 48, "counts": { "A": 6, "B": 9, "C": 33 } }
 ```
 Audit `recalculate_doctor_abc` (`entityType: "doctor_abc"`, `entityId` = tenant, `newValues` = a
 resposta). **Erros:** `FORBIDDEN` (403, atendente/`platform_operator`).
+
+#### GET /doctors/:id/revenue (CRMLAB-198, D-336)
+Faturamento do médico no LIS, para a ficha. Mesmos papéis e escopo de `GET /doctors/:id`: o
+representante só vê a carteira dele; fora dela, ou de outro tenant, é `NOT_FOUND`. **Response (200):**
+```json
+{ "matched": true, "windowStart": "2025-11-24", "windowEnd": "2026-11-24",
+  "requisitionCount": 31, "requisitionValue": 7420.1, "paidCount": 28, "paidValue": 6980,
+  "lastRequisitionOn": "2026-11-20" }
+```
+- A janela é dos **últimos 12 meses** (`DOCTOR_ABC_WINDOW_MONTHS`), a mesma da curva ABC:
+  `paidValue` é a base dela.
+- A requisição é contada pela emissão e o recebido pelo pagamento, com as mesmas regras de
+  `GET /lis-budgets/by-doctor`.
+- **`matched: false`:** o médico não tem CRM + UF no cadastro, e todos os números vêm `0` ou `null`.
+
+**Erros:** `NOT_FOUND` (404), `FORBIDDEN` (403, atendente/`platform_operator`).
 
 As 4 rotas entram no inventário de isolamento (132 → 136). Ficam registradas **antes** de
 `/doctors/:id` no router (senão `specialties`/`abc` cairiam na validação de uuid).

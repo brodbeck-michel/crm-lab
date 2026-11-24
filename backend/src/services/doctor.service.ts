@@ -37,6 +37,7 @@ import {
   normalizeCrm,
   normalizeUf,
   saoPauloToday,
+  type DoctorRevenue,
   type CreateDoctorRequest,
   type Doctor,
   type DoctorCrmConflictDetails,
@@ -55,6 +56,9 @@ import type { DbClient } from '../db/types.js';
 import type { TenantContext } from '../http/context.js';
 import { BusinessError, notFound } from '../http/errors.js';
 import { DoctorSpecialtyRepository } from '../repositories/doctor-specialty.repository.js';
+import { getSingleDoctorRevenue } from '../repositories/lis-doctor-revenue.repository.js';
+import { toMoney } from './analytics.service.js';
+import { abcWindowStart } from './doctor-abc.service.js';
 import {
   DoctorRepository,
   isDoctorSortBy,
@@ -122,6 +126,8 @@ export interface DoctorService {
   portfolios(ctx: TenantContext): Promise<ListDoctorPortfoliosResponse>;
   /** Transferencia em lote (gestor/admin — D-329 item 8). */
   transfer(ctx: TenantContext, dto: TransferDoctorsRequest): Promise<TransferDoctorsResponse>;
+  /** Faturamento no LIS, 12 meses (CRMLAB-198, D-336 item 6). Mesmo escopo de `getById`. */
+  getRevenue(ctx: TenantContext, id: string): Promise<DoctorRevenue>;
 }
 
 export interface DoctorServiceDeps {
@@ -535,6 +541,36 @@ export function createDoctorService(deps: DoctorServiceDeps): DoctorService {
     /** Inexistente ou de outro tenant -> `NOT_FOUND` (nunca `FORBIDDEN`). */
     async getById(ctx: TenantContext, id: string): Promise<Doctor> {
       return load(ctx, id);
+    },
+
+    async getRevenue(ctx: TenantContext, id: string): Promise<DoctorRevenue> {
+      const doctor = await load(ctx, id);
+      // Mesma janela da curva ABC: `paidValue` aqui e a base dela (D-336 item 7).
+      const windowStart = abcWindowStart(now()).toISOString().slice(0, 10);
+      const windowEnd = saoPauloToday(now());
+      if (doctor.crm === null || doctor.crmUf === null) {
+        return {
+          matched: false,
+          windowStart,
+          windowEnd,
+          requisitionCount: 0,
+          requisitionValue: 0,
+          paidCount: 0,
+          paidValue: 0,
+          lastRequisitionOn: null,
+        };
+      }
+      const revenue = await deps.db.withTenant(ctx.tenantId, (tx) =>
+        getSingleDoctorRevenue(tx, ctx.tenantId, doctor.id, windowStart, windowEnd),
+      );
+      return {
+        matched: true,
+        windowStart,
+        windowEnd,
+        ...revenue,
+        requisitionValue: toMoney(revenue.requisitionValue),
+        paidValue: toMoney(revenue.paidValue),
+      };
     },
 
     async create(ctx: TenantContext, dto: CreateDoctorRequest): Promise<Doctor> {

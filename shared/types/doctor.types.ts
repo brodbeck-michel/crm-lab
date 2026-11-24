@@ -229,6 +229,22 @@ export const DOCTOR_ABC_THRESHOLDS = { A: 0.8, B: 0.95 } as const;
 export const DOCTOR_ABC_WINDOW_MONTHS = 12;
 
 /**
+ * Faturamento do médico no LIS, últimos `DOCTOR_ABC_WINDOW_MONTHS` meses — `GET /doctors/:id/revenue`
+ * (CRMLAB-198, D-336 item 6). `paidValue` é a base da curva ABC.
+ */
+export interface DoctorRevenue {
+  /** O médico tem CRM + UF no cadastro (sem isso, nada casa e tudo vem zerado). */
+  matched: boolean;
+  windowStart: string; // YYYY-MM-DD
+  windowEnd: string; // YYYY-MM-DD
+  requisitionCount: number;
+  requisitionValue: number;
+  paidCount: number;
+  paidValue: number;
+  lastRequisitionOn: string | null; // YYYY-MM-DD
+}
+
+/**
  * Classifica por Pareto. `values` = base de cada médico (soma das vendas na
  * janela). Regra (D-328 item 6):
  *  - ordena do maior para o menor;

@@ -1455,6 +1455,35 @@ nome de arquivo `comissoes-<startDate>-<endDate>.xlsx`.
   os números." e o botão **"Importar planilha"**, que abre o mesmo modal do cabeçalho. Período sem
   movimento é estado normal, não falha — e tela vazia é convite para agir, não aviso.
 
+#### Faturamento por médico solicitante (CRMLAB-198, D-336)
+Cartão depois do detalhe por atendente, na mesma moldura. Fonte: `GET /lis-budgets/by-doctor`
+(API_CONTRACTS §10.2), com o período e o filtro de convênio da tela. Componente
+`components/lis/DoctorRevenueTable.tsx`.
+
+- **Cabeçalho do cartão:** título "Faturamento por médico solicitante" e dois `Select`:
+  - **Representante:** "Todos os representantes" + a lista de `useVisitationResponsibles`. Escolher
+    um manda `responsibleId`, e só ficam os médicos cadastrados daquela carteira;
+  - **Ordenar por:** Recebido (padrão), Em requisição ou Requisições. A ordenação é feita no cliente.
+- **Tabela (`DataTable`):**
+  - **Médico:** o nome, com "CRM 12345/SC" embaixo. A linha `no-doctor` aparece como "Sem médico
+    (CRM 1)", com "Sem pedido médico ou solicitado pela enfermagem" embaixo. A linha sem os dados do
+    médico aparece como "Sem médico informado". As duas ficam em itálico;
+  - **Representante:** `responsibleName` ou "—";
+  - **Requisições:** número;
+  - **Em requisição:** `MoneyDisplay`;
+  - **Recebido:** `MoneyDisplay`;
+  - **% do recebido:** `paidValue / totals.paidValue`; "—" quando o total é 0.
+
+  Linha com `doctorId` é clicável e abre a ficha `/visitation/doctors/:id`. Há uma linha **TOTAL**
+  no fim, com `totals`.
+- **Vazio:** "Nenhuma requisição com médico neste período." Com representante escolhido: "Nenhum
+  médico desta carteira com requisição no período."
+- **PDF Executivo:** a seção "Médicos solicitantes" fica depois de "Convênios e Dependência
+  Comercial". É o top 10 por recebido (só quem recebeu algo) destes mesmos dados, sem o filtro de
+  representante, com as colunas Médico, Requisições, Em requisição, Recebido e % da receita. Sem
+  linhas, a seção não sai. Com o filtro de convênio ligado, também não sai: o PDF é o retrato do
+  período inteiro, e a regra é a mesma do comparativo e das comissões.
+
 #### Modal Importar (usado em `/results` e `/reconciliation`)
 
 - `UploadDropzone` aceita **um único `.xlsx`**, convertido para base64 no cliente →
@@ -1936,6 +1965,13 @@ VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors
     [Editar] só no próprio, [Excluir] no próprio ou para o admin (`window.confirm`). Campo
     "Escreva um comentário" (até 2000) + [Comentar]. Editar troca o texto por `TextArea` + [Salvar]
     [Cancelar].
+
+- **CRMLAB-198 (D-336) — Faturamento (LIS):** seção logo depois das seções de dados, antes da linha do tempo, com a fonte
+  `GET /doctors/:id/revenue`:
+  - três números dos últimos 12 meses: **Requisições**, **Em requisição** e **Recebido**;
+  - abaixo, "Última requisição em 20/11/2026" e a nota "Base da curva ABC: recebido em 12 meses";
+  - com `matched: false`: "Sem CRM e UF no cadastro: o faturamento do LIS é ligado ao médico pelo
+    CRM + UF." e o botão [Editar].
 
 #### Formulário de proposta — médico do cadastro (CRMLAB-188, D-328)
 Em Novo orçamento (`SummaryColumn`) e na edição da proposta (`ProposalModal`), o campo "Médico

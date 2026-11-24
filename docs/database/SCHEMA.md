@@ -1435,6 +1435,12 @@ CREATE TABLE lis_budgets (
   paid_value NUMERIC(12,2),              -- DERIVADO do extrato §26a (D-188): soma dos ativos, teto na requisição
   paid_on DATE,                          -- DERIVADO do extrato §26a (D-188): dia do último pagamento considerado
 
+  -- Médico solicitante da requisição (migração 075 — CRMLAB-198, D-335). Só a API manda; §53.
+  requesting_doctor_name VARCHAR(255),   -- MEDICO_SOLICITANTE
+  requesting_doctor_council VARCHAR(10), -- CONSELHO_MEDICO (CRM, CRO…), maiúscula
+  requesting_doctor_crm VARCHAR(20),     -- CRM_MEDICO, só dígitos
+  requesting_doctor_uf CHAR(2),          -- UF_CRM_MEDICO, UF válida
+
   import_id UUID NOT NULL,               -- importação que gravou/atualizou esta linha por último
   proposal_id UUID NULL,                 -- conciliação (Onda 13, D-119) — nasce NULL nesta onda
 
@@ -2689,6 +2695,29 @@ ALTER TABLE users ADD CONSTRAINT users_role_check
 - A carteira é `doctors.responsible_user_id` (índice `idx_doctors_responsible_user_id`, migração
   047); o escopo da visita usa também `idx_doctor_visits_responsible_user_id` (048). Nenhum índice
   novo.
+
+### 53. Médico solicitante em `lis_budgets` (migração 075 — CRMLAB-198, D-335)
+Dono: `LisImportRepository` (escrita no upsert) e `LisSyncSettingsRepository.knownBudgets` (leitura
+da janela sobreposta). Só DDL e aditiva. Não há backfill: o médico chega quando o Bitlab reenvia o
+orçamento (SERVICES.md §24.1).
+
+```sql
+ALTER TABLE lis_budgets
+  ADD COLUMN IF NOT EXISTS requesting_doctor_name VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS requesting_doctor_council VARCHAR(10),
+  ADD COLUMN IF NOT EXISTS requesting_doctor_crm VARCHAR(20),
+  ADD COLUMN IF NOT EXISTS requesting_doctor_uf CHAR(2);
+CREATE INDEX IF NOT EXISTS idx_lis_budgets_tenant_doctor_crm
+  ON lis_budgets(tenant_id, requesting_doctor_crm, requesting_doctor_uf)
+  WHERE requesting_doctor_crm IS NOT NULL;
+```
+
+- **Sem CHECK:** a normalização é feita na borda (`toLisRow`). Um valor fora do padrão vindo do
+  Bitlab vira `null` em vez de derrubar o chunk da sync.
+- **Sem `doctor_id`:** o vínculo com `doctors` (§35) é feito no join da leitura, por
+  `crm = requesting_doctor_crm AND crm_uf = requesting_doctor_uf`, só com o conselho `CRM` ou
+  `null` (D-335 item 5). Assim o médico cadastrado depois já casa com os orçamentos antigos.
+- **Só a API escreve:** linha de planilha mantém o que está gravado (D-335 item 2).
 
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 

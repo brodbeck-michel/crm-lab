@@ -3,6 +3,8 @@ import type {
   LisBudgetsFilters,
   LisBudgetsSummary,
   LisBudgetsSummaryQuery,
+  LisDoctorRevenueQuery,
+  LisDoctorRevenueResponse,
   LisImport,
   ListLisBudgetsQuery,
   ListLisBudgetsResponse,
@@ -50,6 +52,9 @@ export const lisBudgetsApi = {
     http.get<PendingLisBudgetsSummary>('/lis-budgets/pending/summary', query as QueryParams),
 
   filters: () => http.get<LisBudgetsFilters>('/lis-budgets/filters'),
+
+  byDoctor: (query: LisDoctorRevenueQuery = {}) =>
+    http.get<LisDoctorRevenueResponse>('/lis-budgets/by-doctor', query as QueryParams),
 };
 
 /* ── React Query Hooks ──────────────────────────────────────────────────── */
@@ -97,6 +102,19 @@ export function useLisBudgetsPendingSummary(
   return useQuery({
     queryKey: queryKeys.lisBudgetsPendingSummary(query),
     queryFn: () => lisBudgetsApi.pendingSummary(query),
+    staleTime: staleTimes.lis,
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** Faturamento por médico solicitante (CRMLAB-198, D-336). */
+export function useLisDoctorRevenue(
+  query: LisDoctorRevenueQuery = {},
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.lisBudgetsByDoctor(query),
+    queryFn: () => lisBudgetsApi.byDoctor(query),
     staleTime: staleTimes.lis,
     enabled: options.enabled ?? true,
   });

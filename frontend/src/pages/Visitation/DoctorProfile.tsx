@@ -19,7 +19,7 @@ import { mapFieldErrors } from '@/api/error-handler';
 import { queryKeys } from '@/api/query-keys';
 import { useApiErrorHandler } from '@/hooks';
 import { PageContainer, PageHeader } from '@/components/layout';
-import { EmptyState, Modal } from '@/components/shared';
+import { EmptyState, Modal, MoneyDisplay } from '@/components/shared';
 import { Button, Chip, Input, Select, TextArea, useToast } from '@/components/ui';
 import { formatDateTime, fromDateTimeInputs, toDateInput, toTimeInput } from './agenda-dates';
 import { FeedComments, FeedFilter, VisitFeedItem, type FeedFilterValue } from './DoctorFeed';
@@ -118,12 +118,58 @@ export default function DoctorProfile() {
 
       <DoctorDetails doctor={doctor} />
 
+      <DoctorRevenueSection doctorId={doctor.id} onEdit={() => setEditing(true)} />
+
       <DoctorTimeline doctorId={doctor.id} />
 
       {editing && (
         <DoctorModal doctor={doctor} assignees={responsibles} onClose={() => setEditing(false)} />
       )}
     </PageContainer>
+  );
+}
+
+/**
+ * Faturamento no LIS, últimos 12 meses (PAGES.md §22b, CRMLAB-198 · D-336 item 6). O vínculo é
+ * pelo CRM + UF do cadastro; sem eles, a seção explica e oferece editar.
+ */
+function DoctorRevenueSection({ doctorId, onEdit }: { doctorId: string; onEdit: () => void }) {
+  const { data } = useQuery({
+    queryKey: queryKeys.doctorRevenue(doctorId),
+    queryFn: () => doctorsApi.revenue(doctorId),
+  });
+  if (!data) return null;
+  if (!data.matched) {
+    return (
+      <section aria-label="Faturamento (LIS)" className="rounded-lg border border-neutral-200 bg-surface p-lg">
+        <h2 className="m-0 mb-md font-heading text-label font-semibold text-text">Faturamento (LIS)</h2>
+        <div className="flex flex-wrap items-center justify-between gap-md">
+          <p className="m-0 text-caption text-neutral-600">
+            Sem CRM e UF no cadastro: o faturamento do LIS é ligado ao médico pelo CRM + UF.
+          </p>
+          <Button variant="secondary" size="sm" onClick={onEdit}>
+            Editar
+          </Button>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <DetailSection
+      title="Faturamento (LIS) — últimos 12 meses"
+      fields={[
+        ['Requisições', String(data.requisitionCount)],
+        ['Em requisição', <MoneyDisplay key="req" value={data.requisitionValue} />],
+        ['Recebido', <MoneyDisplay key="paid" value={data.paidValue} emphasis />],
+      ]}
+    >
+      <p className="m-0 mt-md text-caption text-neutral-600">
+        {data.lastRequisitionOn
+          ? `Última requisição em ${formatIsoDay(data.lastRequisitionOn)}. `
+          : 'Nenhuma requisição deste médico no LIS. '}
+        Base da curva ABC: recebido em 12 meses.
+      </p>
+    </DetailSection>
   );
 }
 

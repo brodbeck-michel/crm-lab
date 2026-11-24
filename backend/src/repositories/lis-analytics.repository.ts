@@ -138,7 +138,7 @@ export interface SummaryFilters {
   insuranceId?: string;
 }
 
-function summaryFilterClauses(
+export function summaryFilterClauses(
   filters: Pick<SummaryFilters, 'attendantId' | 'insuranceId'>,
   params: unknown[],
 ): string[] {

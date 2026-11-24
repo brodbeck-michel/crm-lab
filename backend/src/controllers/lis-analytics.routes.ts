@@ -7,6 +7,7 @@
  *   GET /lis-budgets/pending         Busca Ativa
  *   GET /lis-budgets/pending/summary Busca Ativa (agregado do PDF)
  *   GET /lis-budgets/filters         seletores das 3 telas
+ *   GET /lis-budgets/by-doctor       Resultados — faturamento por médico (CRMLAB-198, D-336)
  */
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { z } from 'zod';
@@ -14,6 +15,8 @@ import type {
   LisBudgetsFilters,
   LisBudgetsSummary,
   LisBudgetsSummaryQuery,
+  LisDoctorRevenueQuery,
+  LisDoctorRevenueResponse,
   ListLisBudgetsQuery,
   ListLisBudgetsResponse,
   ListPendingLisBudgetsQuery,
@@ -52,6 +55,10 @@ const summaryQuerySchema = z.object({
   endDate: dateParam.optional(),
   attendantId: z.uuid().optional(),
   insuranceId: z.uuid().optional(),
+});
+
+const byDoctorQuerySchema = summaryQuerySchema.extend({
+  responsibleId: z.uuid().optional(),
 });
 
 const pendingQuerySchema = z.object({
@@ -100,6 +107,16 @@ export function lisAnalyticsModule(deps: ApiModuleDeps): ApiModule {
     handle(async (req, res) => {
       const query = validated<LisBudgetsSummaryQuery>(req, 'query');
       const body: LisBudgetsSummary = await service.getSummary(getContext(req), query);
+      res.status(200).json(body);
+    }),
+  );
+
+  router.get(
+    '/by-doctor',
+    validate(byDoctorQuerySchema, 'query'),
+    handle(async (req, res) => {
+      const query = validated<LisDoctorRevenueQuery>(req, 'query');
+      const body: LisDoctorRevenueResponse = await service.getByDoctor(getContext(req), query);
       res.status(200).json(body);
     }),
   );

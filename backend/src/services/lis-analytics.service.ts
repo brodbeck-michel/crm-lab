@@ -8,6 +8,8 @@ import type {
   LisBudgetsFilters,
   LisBudgetsSummary,
   LisBudgetsSummaryQuery,
+  LisDoctorRevenueQuery,
+  LisDoctorRevenueResponse,
   LisIssuedTotals,
   ListLisBudgetsQuery,
   ListLisBudgetsResponse,
@@ -23,6 +25,7 @@ import { BusinessError } from '../http/errors.js';
 import type { CacheService } from '../lib/cache.js';
 import { average, percent, resolvePeriod, toMoney } from './analytics.service.js';
 import * as lisAnalyticsRepo from '../repositories/lis-analytics.repository.js';
+import { getDoctorRevenue } from '../repositories/lis-doctor-revenue.repository.js';
 
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_LIMIT = 20;
@@ -51,6 +54,8 @@ export interface LisAnalyticsService {
     query: PendingLisBudgetsSummaryQuery,
   ): Promise<PendingLisBudgetsSummary>;
   getFilters(ctx: TenantContext): Promise<LisBudgetsFilters>;
+  /** Faturamento por médico solicitante (CRMLAB-198, D-336). Sem cache. */
+  getByDoctor(ctx: TenantContext, query: LisDoctorRevenueQuery): Promise<LisDoctorRevenueResponse>;
 }
 
 /**
@@ -226,6 +231,39 @@ export function createLisAnalyticsService(deps: LisAnalyticsServiceDeps): LisAna
           byInsurance: qualifies ? byInsurance : [],
         };
       });
+    },
+
+    async getByDoctor(
+      ctx: TenantContext,
+      query: LisDoctorRevenueQuery,
+    ): Promise<LisDoctorRevenueResponse> {
+      assertManagerOrAdmin(ctx);
+      const period = resolvePeriod({ startDate: query.startDate, endDate: query.endDate }, now());
+      // Sem cache (D-336 item 4): o vínculo depende de `doctors`, que o import não invalida.
+      const rows = await db.withTenant(ctx.tenantId, (tx) =>
+        getDoctorRevenue(tx, ctx.tenantId, {
+          startDate: period.startDate,
+          endDate: period.endDate,
+          ...(query.attendantId !== undefined ? { attendantId: query.attendantId } : {}),
+          ...(query.insuranceId !== undefined ? { insuranceId: query.insuranceId } : {}),
+          ...(query.responsibleId !== undefined ? { responsibleId: query.responsibleId } : {}),
+        }),
+      );
+      const money = rows.map((row) => ({
+        ...row,
+        requisitionValue: toMoney(row.requisitionValue),
+        paidValue: toMoney(row.paidValue),
+      }));
+      return {
+        period: { startDate: period.startDate, endDate: period.endDate },
+        rows: money,
+        totals: {
+          requisitionCount: money.reduce((sum, r) => sum + r.requisitionCount, 0),
+          requisitionValue: toMoney(money.reduce((sum, r) => sum + r.requisitionValue, 0)),
+          paidCount: money.reduce((sum, r) => sum + r.paidCount, 0),
+          paidValue: toMoney(money.reduce((sum, r) => sum + r.paidValue, 0)),
+        },
+      };
     },
 
     async listPending(

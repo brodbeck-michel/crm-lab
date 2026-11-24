@@ -11,6 +11,7 @@
  * Linha do tempo do medico (CRMLAB-89, D-261):
  *
  *   GET    /api/v1/doctors/:id/timeline                         visitas + registros manuais
+ *   GET    /api/v1/doctors/:id/revenue                          faturamento no LIS, 12 meses (CRMLAB-198, D-336)
  *   POST   /api/v1/doctors/:id/interactions                     lanca registro manual
  *   PATCH  /api/v1/doctors/:id/interactions/:interactionId      edita (parcial)
  *   DELETE /api/v1/doctors/:id/interactions/:interactionId      exclui
@@ -66,6 +67,7 @@ import {
   type CreateDoctorRequest,
   type CreateDoctorSpecialtyRequest,
   type Doctor,
+  type DoctorRevenue,
   type DoctorAbcRecalculation,
   type DoctorSpecialty,
   type ListDoctorSpecialtiesQuery,
@@ -385,6 +387,14 @@ export function transferDoctors(service: DoctorService): RequestHandler {
   });
 }
 
+export function getDoctorRevenue(service: DoctorService): RequestHandler {
+  return handle(async (req, res) => {
+    const { id } = validated<{ id: string }>(req, 'params');
+    const body: DoctorRevenue = await service.getRevenue(getContext(req), id);
+    res.status(200).json(body);
+  });
+}
+
 export function getDoctorTimeline(service: DoctorInteractionService): RequestHandler {
   return handle(async (req, res) => {
     const { id } = validated<{ id: string }>(req, 'params');
@@ -540,6 +550,7 @@ export function doctorModule(deps: ApiModuleDeps): ApiModule {
   // Linha do tempo (CRMLAB-89, D-261): mesmos guardas; representante so na carteira (D-329).
   const interactionParams = validate(doctorInteractionParamsSchema, 'params');
   router.get('/:id/timeline', ...guards, idParam, validate(doctorTimelineQuerySchema, 'query'), getDoctorTimeline(interactions));
+  router.get('/:id/revenue', ...guards, idParam, getDoctorRevenue(service));
   router.post(
     '/:id/interactions',
     ...guards,

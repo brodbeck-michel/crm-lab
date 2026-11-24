@@ -1,8 +1,11 @@
 import type jsPDF from 'jspdf';
+import { LIS_DOCTOR_NO_DOCTOR_KEY } from '@crm-lab/shared';
 import type {
   CommissionSettings,
   ExecutiveReport,
   LisBudgetsSummary,
+  LisDoctorRevenueResponse,
+  LisDoctorRevenueRow,
   PendingLisBudgetsSummary,
   Theme,
 } from '@crm-lab/shared';
@@ -77,6 +80,23 @@ export interface ExecutiveReportPdfInput {
    * Quando o endpoint ganhar filtro de data, basta passar o recorte aqui.
    */
   pending?: PendingLisBudgetsSummary | null;
+  /**
+   * Faturamento por médico solicitante de `/results` (`GET /lis-budgets/by-doctor`, CRMLAB-198,
+   * D-336), sem filtro de representante. `null` com filtro de convênio ligado.
+   */
+  doctors?: LisDoctorRevenueResponse | null;
+}
+
+/** Top 10 por recebido, só quem recebeu algo (a lista do servidor já vem nessa ordem). */
+export function topDoctors(doctors: LisDoctorRevenueResponse | null | undefined): LisDoctorRevenueRow[] {
+  return (doctors?.rows ?? []).filter((row) => row.paidValue > 0).slice(0, 10);
+}
+
+function doctorPdfLabel(row: LisDoctorRevenueRow): string {
+  if (row.doctorKey === null) return 'Sem médico informado';
+  if (row.doctorKey === LIS_DOCTOR_NO_DOCTOR_KEY) return 'Sem médico (CRM 1: sem pedido médico ou enfermagem)';
+  const name = row.doctorName ?? '—';
+  return `${name} — ${row.council ?? 'CRM'} ${row.crm ?? ''}/${row.uf ?? ''}`;
 }
 
 export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput): Promise<void> {
@@ -235,14 +255,37 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
 
     y = space(y, 140, 'Página 3 — Convênios e Dependência Comercial');
     y = sectionTitle(doc, palette, y, 'Insight Executivo');
-    paragraph(doc, y, insuranceInsight(report, facts));
+    y = paragraph(doc, y, insuranceInsight(report, facts)) + 8;
   } else {
     // O servidor omite o recorte por convênio abaixo do volume mínimo.
-    paragraph(
+    y = paragraph(
       doc,
       y,
       `O período não atingiu o volume mínimo de ${MIN_RANKING_BUDGETS} orçamentos emitidos exigido para o recorte por convênio, ou nenhum convênio registrou receita. Amplie o período para obter a análise de concentração.`,
-    );
+    ) + 8;
+  }
+
+  // Médicos solicitantes (CRMLAB-198, D-336 item 5): top 10 por recebido, dos mesmos dados de
+  // `/results`. Sem linhas (ou com filtro de convênio, que a tela manda como null), não sai.
+  const doctorRows = topDoctors(input.doctors);
+  if (doctorRows.length) {
+    y = space(y, 180, 'Página 3 — Convênios e Dependência Comercial');
+    y = sectionTitle(doc, palette, y, 'Médicos Solicitantes (top 10 por recebido)');
+    const doctorsPaid = input.doctors?.totals.paidValue ?? 0;
+    autoTable(doc, {
+      startY: y,
+      head: [['Médico', 'Requisições', 'Em requisição', 'Recebido', '% da receita']],
+      body: doctorRows.map((row) => [
+        doctorPdfLabel(row),
+        String(row.requisitionCount),
+        brl(row.requisitionValue),
+        brl(row.paidValue),
+        pctText(share(row.paidValue, doctorsPaid)),
+      ]),
+      ...tableTheme(palette),
+      columnStyles: { 1: { halign: 'center' }, 4: { halign: 'right' } },
+    });
+    y = afterTable(doc, y);
   }
 
   // ── Página 4 — Evolução, Busca Ativa e Conclusão ───────────────────────

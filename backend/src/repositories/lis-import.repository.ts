@@ -13,7 +13,11 @@ import type { DbClient, DbTx } from '../db/types.js';
 import { findAttendantIdByFoldedName } from './attendant.repository.js';
 import { toIso, toIsoOrNull } from './row-mappers.js';
 import type { LisDiscountField, LisPayment, LisSpreadsheetRow } from '../lib/lis-spreadsheet.js';
-import { principalInsuranceName } from '../lib/lis-spreadsheet.js';
+import {
+  hasRequestingDoctorFields,
+  principalInsuranceName,
+  type REQUESTING_DOCTOR_FIELDS,
+} from '../lib/lis-spreadsheet.js';
 
 // ---------------------------------------------------------------------------
 // lis_imports
@@ -240,6 +244,14 @@ const DISCOUNT_COLUMNS: ReadonlyArray<{ column: string; slot: 1 | 2 | 3; field: 
     { column: `payable_value_${slot}`, slot, field: `payableValue${slot}` as LisDiscountField },
   ]);
 
+/** Colunas do médico solicitante (D-335), na ordem dos parâmetros. */
+const DOCTOR_COLUMNS: ReadonlyArray<{ column: string; field: (typeof REQUESTING_DOCTOR_FIELDS)[number] }> = [
+  { column: 'requesting_doctor_name', field: 'requestingDoctorName' },
+  { column: 'requesting_doctor_council', field: 'requestingDoctorCouncil' },
+  { column: 'requesting_doctor_crm', field: 'requestingDoctorCrm' },
+  { column: 'requesting_doctor_uf', field: 'requestingDoctorUf' },
+];
+
 /** A linha veio da API com os campos de desconto (D-278)? A planilha não os tem. */
 function hasDiscountFields(row: LisSpreadsheetRow): boolean {
   return DISCOUNT_COLUMNS.some(({ field }) => row[field] !== undefined);
@@ -258,6 +270,9 @@ function hasDiscountFields(row: LisSpreadsheetRow): boolean {
  * inclusive). A planilha não tem essas colunas — reimportar por ela não apaga
  * o que a API gravou, a não ser que o bruto daquele convênio tenha mudado (aí
  * o desconto antigo não vale mais e o líquido volta a ser o bruto).
+ *
+ * Médico solicitante (D-335 item 2): a API sempre grava o que mandou (null
+ * inclusive); a planilha nunca mexe nele.
  */
 export async function upsertBudget(
   tx: DbTx,
@@ -273,6 +288,16 @@ export async function upsertBudget(
   const discountColumns = DISCOUNT_COLUMNS.map(({ column }) => column).join(', ');
   const discountPlaceholders = DISCOUNT_COLUMNS.map((_, i) => `$${firstDiscountParam + i}`).join(', ');
   const fromApiParam = `$${firstDiscountParam + DISCOUNT_COLUMNS.length}`;
+  // Médico solicitante (D-335 item 2): só a linha da API escreve; a planilha mantém o gravado.
+  const firstDoctorParam = firstDiscountParam + DISCOUNT_COLUMNS.length + 1;
+  const doctorParams = DOCTOR_COLUMNS.map(({ field }) => row[field] ?? null);
+  const doctorColumns = DOCTOR_COLUMNS.map(({ column }) => column).join(', ');
+  const doctorPlaceholders = DOCTOR_COLUMNS.map((_, i) => `$${firstDoctorParam + i}`).join(', ');
+  const doctorFromApiParam = `$${firstDoctorParam + DOCTOR_COLUMNS.length}`;
+  const doctorUpdates = DOCTOR_COLUMNS.map(
+    ({ column }) =>
+      `${column} = CASE WHEN ${doctorFromApiParam}::boolean THEN EXCLUDED.${column} ELSE lis_budgets.${column} END,`,
+  ).join('\n       ');
   const discountUpdates = DISCOUNT_COLUMNS.map(
     ({ column, slot }) =>
       `${column} = CASE WHEN ${fromApiParam}::boolean
@@ -285,15 +310,16 @@ export async function upsertBudget(
        tenant_id, number, issued_on, patient_name,
        insurance_1, value_1, insurance_2, value_2, insurance_3, value_3,
        insurance_id, attendant_name, attendant_id, insurance_average,
-       requisition_number, requisition_value, import_id, ${discountColumns}
+       requisition_number, requisition_value, import_id, ${discountColumns}, ${doctorColumns}
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-       ${discountPlaceholders}
+       ${discountPlaceholders}, ${doctorPlaceholders}
      )
      ON CONFLICT (tenant_id, number) DO UPDATE SET
        issued_on = EXCLUDED.issued_on,
        patient_name = EXCLUDED.patient_name,
        ${discountUpdates}
+       ${doctorUpdates}
        insurance_1 = EXCLUDED.insurance_1,
        value_1 = EXCLUDED.value_1,
        insurance_2 = EXCLUDED.insurance_2,
@@ -329,6 +355,8 @@ export async function upsertBudget(
       importId,
       ...discountParams,
       fromApi,
+      ...doctorParams,
+      hasRequestingDoctorFields(row),
     ],
   );
 }

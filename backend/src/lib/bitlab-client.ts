@@ -16,7 +16,7 @@
  * da chamada. Nunca entra em mensagem de erro.
  */
 import { z } from 'zod';
-import type { LisSyncErrorKind } from '@crm-lab/shared';
+import { isBrazilUf, normalizeCrm, normalizeUf, type LisSyncErrorKind } from '@crm-lab/shared';
 import { isGatewayTimeout, withGatewayTimeout } from './fetch-timeout.js';
 import type { LisSpreadsheetRow } from './lis-spreadsheet.js';
 
@@ -202,6 +202,12 @@ const budgetSchema = z.object({
   DATA_ESTORNO: text,
   FORMA_PAGAMENTO: text,
   BANDEIRA_CARTAO: text,
+  // Medico solicitante da requisicao, desde 24/11/2026 (CRMLAB-198, D-335).
+  // Null ate o orcamento virar requisicao; ausente na API antiga.
+  MEDICO_SOLICITANTE: text,
+  CONSELHO_MEDICO: text,
+  CRM_MEDICO: text,
+  UF_CRM_MEDICO: text,
 });
 
 /** `SITUACAO_PAGAMENTO` -> situação do extrato. Desconhecida ou ausente = ativo. */
@@ -239,6 +245,26 @@ const errorSchema = z.object({
 });
 
 type BitlabBudget = z.infer<typeof budgetSchema>;
+
+/** Teto da coluna `lis_budgets.requesting_doctor_crm` (SCHEMA §53). */
+const DOCTOR_CRM_MAX = 20;
+
+/** Medico solicitante normalizado (D-335 item 1). O que nao passa vira null. */
+function requestingDoctorOf(budget: BitlabBudget): Pick<
+  LisSpreadsheetRow,
+  'requestingDoctorName' | 'requestingDoctorCouncil' | 'requestingDoctorCrm' | 'requestingDoctorUf'
+> {
+  const name = budget.MEDICO_SOLICITANTE?.trim().slice(0, 255) ?? null;
+  const council = budget.CONSELHO_MEDICO?.trim().toUpperCase() ?? null;
+  const crm = normalizeCrm(budget.CRM_MEDICO);
+  const uf = normalizeUf(budget.UF_CRM_MEDICO);
+  return {
+    requestingDoctorName: name,
+    requestingDoctorCouncil: council !== null && council.length <= 10 ? council : null,
+    requestingDoctorCrm: crm !== null && crm.length <= DOCTOR_CRM_MAX ? crm : null,
+    requestingDoctorUf: uf !== null && isBrazilUf(uf) ? uf : null,
+  };
+}
 
 /** Um orcamento da API -> a MESMA linha interna que a planilha produz (§11.10). */
 export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
@@ -279,6 +305,7 @@ export function toLisRow(budget: BitlabBudget): LisSpreadsheetRow {
     discountValue3: budget.VL_DESCONTO3,
     surchargeValue3: budget.VL_ACRESCIMO3,
     payableValue3: budget.VL_APAGAR3,
+    ...requestingDoctorOf(budget),
   };
 }
 

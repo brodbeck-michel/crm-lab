@@ -141,6 +141,11 @@ describe('BitlabClient.fetchBudgetsPage', () => {
         discountValue3: null,
         surchargeValue3: null,
         payableValue3: null,
+        // API antiga (sem os campos de D-335): medico null.
+        requestingDoctorName: null,
+        requestingDoctorCouncil: null,
+        requestingDoctorCrm: null,
+        requestingDoctorUf: null,
       },
     ]);
     const serialized = JSON.stringify(page);
@@ -220,6 +225,42 @@ describe('BitlabClient.fetchBudgetsPage', () => {
       paymentMethod: 'Cartão Crédito',
       cardBrand: 'MASTER CREDITO',
     });
+  });
+
+  it('le e normaliza o medico solicitante (CRMLAB-198, D-335)', async () => {
+    const page = await client(
+      fakeFetch(
+        200,
+        listResponse({
+          orcamentos: [
+            {
+              ...BUDGET,
+              MEDICO_SOLICITANTE: '  Dra. Ana Souza ',
+              CONSELHO_MEDICO: 'crm',
+              CRM_MEDICO: '12.345',
+              UF_CRM_MEDICO: ' sc',
+            },
+            // Orcamento que ainda nao virou requisicao: tudo null.
+            {
+              ...BUDGET,
+              ORCAMENTO: 1235,
+              MEDICO_SOLICITANTE: null,
+              CONSELHO_MEDICO: null,
+              CRM_MEDICO: null,
+              UF_CRM_MEDICO: null,
+            },
+            // Valor fora do padrao vira null, sem derrubar a pagina.
+            { ...BUDGET, ORCAMENTO: 1236, CONSELHO_MEDICO: 'CONSELHO-LONGO', CRM_MEDICO: '1'.repeat(21), UF_CRM_MEDICO: 'XX' },
+          ],
+        }),
+      ),
+    ).fetchBudgetsPage('k', QUERY);
+
+    expect(page.rows.map((r) => [r.requestingDoctorName, r.requestingDoctorCouncil, r.requestingDoctorCrm, r.requestingDoctorUf])).toEqual([
+      ['Dra. Ana Souza', 'CRM', '12345', 'SC'],
+      [null, null, null, null],
+      [null, null, null, null],
+    ]);
   });
 
   it('SITUACAO_PAGAMENTO ATIVO vira ativo', async () => {

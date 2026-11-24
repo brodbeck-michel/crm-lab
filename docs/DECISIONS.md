@@ -7382,7 +7382,7 @@ saber quais médicos trazem receita. Escopo aprovado pelo dono do produto em 21/
    deprecado e só leitura na API). O contrato de escrita troca `specialty`/`contactName` por
    `specialtyId`/`secretaryName` (o único consumidor é o próprio frontend, no mesmo commit).
 9. **Curva ABC automática**, sem edição manual:
-   - **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
+   - **(Base substituída pela D-336 item 7: hoje é o recebido no LIS.)** **Venda fechada = proposta `ganho`** (estágio terminal de sucesso; `closed_at` é gravado na
      transição). Base = soma de `total_price` das propostas `ganho` com `closed_at` nos **últimos 12
      meses**, por `doctor_id`. `total_price` e não o líquido do LIS: é o número que o CRM controla
      (regra §1) e existe em toda proposta.
@@ -7789,3 +7789,131 @@ requisição fica no CRMLAB-196. Decisões do dono do produto no card.
 **Impacto:** `shared/types/lis.types.ts` (queries de pending), `backend/src/{controllers/lis-analytics.routes,
 services/lis-analytics.service,repositories/lis-analytics.repository}.ts`; `frontend/src/pages/ActiveSearch.tsx`,
 `lib/pdf/active-search.ts`; API_CONTRACTS §10.2, PAGES §16.
+
+### D-335: Médico solicitante do Bitlab em `lis_budgets` e linha atrasada que muda requisição/médico
+**Contexto:** a Thaisy (Lab Santé) quer o faturamento por médico solicitante, no molde do relatório
+por convênio. Em 24/11/2026 o Bitlab pôs na API de Orçamentos v1, como aditivos,
+`MEDICO_SOLICITANTE`, `CONSELHO_MEDICO`, `CRM_MEDICO` e `UF_CRM_MEDICO`. No Bitlab o médico só
+existe na **requisição**: até o orçamento virar requisição os quatro vêm `null`, cada requisição tem
+**um** médico, e criar ou alterar a requisição passa a contar no `tipoData: "alteracao"`. A API
+**não** manda a data da requisição. Sem ela, o `changedAt` da linha (maior entre emissão, pagamento
+e estorno, D-304) fica antigo, e a janela sobreposta descartava a linha: orçamento conhecido e
+pagamento igual. Card CRMLAB-198; o relatório fica para um card seguinte.
+**Decisão:**
+1. `lis_budgets` ganha `requesting_doctor_name`, `requesting_doctor_council`,
+   `requesting_doctor_crm` e `requesting_doctor_uf` (migração 075, SCHEMA §53), normalizados na borda
+   (`toLisRow`):
+   - nome com `trim`;
+   - conselho em maiúscula;
+   - número só com dígitos (`normalizeCrm`, a mesma dobra de `doctors.crm`), com no máximo
+     20 dígitos;
+   - UF em maiúscula, só se for UF válida (`isBrazilUf`).
+
+   Valor que não passa vira `null`. Não há CHECK no banco: um valor estranho do Bitlab não pode
+   derrubar o chunk.
+2. **Só a API escreve essas colunas.** Linha da planilha (sem os campos) não apaga o médico gravado
+   pela API. Linha da API com os campos `null` grava `null`: é o estado do Bitlab (requisição ainda
+   não existe). Vale a mesma régua do upsert (`total_value` maior ou igual vence, §11.1).
+3. Na consolidação (`consolidateLisRows`), várias linhas do mesmo orçamento (uma por pagamento) levam
+   o médico da linha representante; se ela não tiver médico, usa o da outra linha.
+4. **Linha atrasada (D-304) entra também quando a requisição ou o médico mudaram:**
+   `knownBudgets` devolve, por orçamento, `requisition_number` e os quatro campos do médico. Uma linha
+   da API de antes da marca entra se algum deles for diferente do que está gravado. É o ajuste do
+   nosso lado, combinado com o dono do produto, em vez de pedir ao Bitlab uma `DATA_REQUISICAO`.
+5. **Vínculo com o cadastro de médicos (CRMLAB-86):** é calculado na leitura, sem coluna
+   `doctor_id`. O join é `doctors.crm = requesting_doctor_crm AND doctors.crm_uf =
+   requesting_doctor_uf`, no mesmo tenant, só quando `requesting_doctor_council` é `CRM` ou `null`.
+   `doctors` não guarda o conselho, e um CRO com o mesmo número não é aquele médico. Calcular na
+   leitura faz o médico cadastrado depois já casar com os orçamentos antigos, sem backfill. O índice
+   parcial `idx_lis_budgets_tenant_doctor_crm` atende o join. Este card **não** cria médico
+   automaticamente no cadastro.
+6. **Orçamentos que já viraram requisição antes do deploy** só ganham o médico quando o Bitlab os
+   reenviar: alteração nova, rede diária, ou uma rodada `full`, que hoje nenhuma rota dispara
+   (D-253). O histórico é preenchido com **uma carga única, desde 01/01/2026** (período escolhido
+   pelo dono do produto em 24/11/2026). A carga recua a marca d'água em prod, sem código novo: o tique
+   seguinte lê de 01/01/2026 até agora pelo caminho normal, e a marca volta sozinha para o presente
+   no fim da rodada. Orçamento antigo não vira cartão, porque a criação exige `issued_on >=
+   bitlab_proposals_since` (D-196). Só roda **depois** do deploy de prod com a 075. Rodada antes
+   disso traria as linhas sem os campos do médico. Passo a passo, em `/opt/crm-lab`, no `psql` do
+   container `postgres`:
+   1. conferir as colunas `requesting_doctor_*` em `lis_budgets`;
+   2. guardar a marca atual: `SELECT tenant_id, watermark FROM lis_sync_settings WHERE enabled;`;
+   3. recuar só o Santé: `UPDATE lis_sync_settings SET watermark = '2026-01-01 00:00:00' WHERE
+      tenant_id = '<santé>';`;
+   4. acompanhar o log do backend até `lis_sync.completed`. Se vier `lis_sync.failed` com
+      `rejected` (`PERIODO_INVALIDO`: o Bitlab pode ter limite de período, que o manual não
+      informa), voltar a marca guardada no passo 2. A janela sempre termina em "agora", então recuar
+      menos encurta o histórico; outro caminho (consulta do Bitlab por partes) é combinado à parte;
+   5. conferir: `SELECT count(*) FILTER (WHERE requesting_doctor_crm IS NOT NULL),
+      count(*) FILTER (WHERE requisition_number IS NOT NULL) FROM lis_budgets WHERE issued_on >=
+      '2026-01-01';`.
+**Impacto:** `backend/migrations/075_lis_budget_requesting_doctor.sql`; `backend/src/lib/{bitlab-client,
+lis-spreadsheet}.ts`; `backend/src/repositories/{lis-import,lis-sync-settings}.repository.ts`;
+`backend/src/services/lis-sync.service.ts`; SERVICES §24/§24.1, SCHEMA §26/§53. Sem mudança de
+contrato HTTP nem de `shared/types` (o relatório trará os tipos).
+
+### D-336: Faturamento por médico solicitante — Resultados, PDF, ficha do médico e curva ABC pelo LIS
+**Contexto:** continuação do CRMLAB-198 (D-335). Com o médico da requisição em `lis_budgets`, a
+Thaisy (Santé) quer o faturamento por médico, no molde do relatório por convênio. Escopo e escolhas
+do dono do produto em 24/11/2026: bloco em Resultados (tabela completa) com top 10 no PDF Executivo,
+as duas janelas, faturamento na ficha do médico, curva ABC pelo faturamento e filtro por
+representante. Tudo vai para prod junto com a D-335.
+
+A consulta só de leitura ao Bitlab em 24/11 (35 linhas) mostrou:
+- os 4 campos vêm sempre como texto, e `null` sem requisição;
+- toda requisição tem um único médico;
+- conselhos CRM e CRN (nutricionista);
+- 8 requisições com CRM `1`, o coringa do laboratório (sem médico ou pedido da enfermagem; item 2).
+
+**Decisão:**
+1. **Quem é o médico de uma requisição:** é o médico de qualquer linha de `lis_budgets` daquela
+   requisição que tenha o médico preenchido. Vale a linha atualizada mais recentemente
+   (`updated_at`). A linha que dá os valores continua sendo a da dedupe por requisição (maior
+   `paid_value`, BUSINESS_RULES §11.2). Assim os totais do relatório batem com os KPIs de Resultados.
+2. **Chave do médico no relatório:**
+   - **identificado** = número com pelo menos `LIS_DOCTOR_MIN_CRM_DIGITS` (3) dígitos e UF. A chave
+     é conselho + número + UF;
+   - **coringa do Bitlab:** número com menos de 3 dígitos. É o CRM `1`, que o laboratório usa
+     quando não há pedido médico ou quando quem pediu foi a enfermagem (confirmado pelo dono do
+     produto com o Santé em 24/11/2026). Tudo isso vira **uma linha só**, `doctorKey: "no-doctor"`
+     ("Sem médico (CRM 1)"), sem nome nem CRM, porque são várias pessoas que não são médicos;
+   - **sem médico:** requisição sem médico nenhum (as de antes da carga do histórico, D-335 item 6)
+     vira uma linha só, com `doctorKey: null` ("Sem médico informado").
+
+   O nome exibido do médico identificado é o mais recente da chave.
+3. **Vínculo com o cadastro (D-335 item 5):** só médico identificado, com conselho `CRM` ou
+   `null`, casado por `doctors.crm`/`crm_uf` do mesmo tenant. A linha casada traz `doctorId` e o
+   representante responsável (`doctors.responsible_user_id`).
+4. **`GET /lis-budgets/by-doctor`** (gestor/admin, API_CONTRACTS §10.2): todas as linhas do período,
+   sem top N e sem o mínimo de `MIN_ORC_RANKING`. É uma prestação de contas, como o detalhe por
+   atendente (D-122), não um ranking. As duas janelas seguem o molde de `byInsurance`:
+   - **requisição** (`requisitionCount`/`requisitionValue`) é a dedupe dos orçamentos **emitidos**
+     no período, a mesma do KPI "Em Requisição" (D-125);
+   - **recebido** (`paidCount`/`paidValue`) é a dedupe de todas as requisições, com `paid_on` no
+     período e `paid_value > 0`, a mesma do KPI "Recebido".
+
+   Os filtros `insuranceId`/`attendantId` são os do summary. O `responsibleId` deixa só os médicos
+   cadastrados daquela carteira; não identificados e "sem médico" saem. A ordem é `paidValue` desc,
+   depois `requisitionValue` desc, depois nome. A resposta traz `totals`, que é a soma das linhas.
+   Sem cache: o vínculo depende de `doctors`, que o import do LIS não invalida.
+5. **Resultados** (PAGES §14): um bloco "Faturamento por médico solicitante" depois do detalhe por
+   atendente, com tabela, filtro de representante e ordenação (recebido, em requisição, requisições).
+   Ele respeita o filtro de convênio da tela. Linha com `doctorId` abre a ficha. **PDF
+   Executivo:** top 10 por recebido numa tabela própria, depois dos convênios. A tabela usa os mesmos
+   dados da tela, sem o filtro de representante, e não chama o backend de novo.
+6. **Ficha do médico** (PAGES §22b): **`GET /doctors/:id/revenue`**, com o mesmo escopo da ficha
+   (o representante só vê a carteira dele; fora dela é `NOT_FOUND`). Mostra requisições, valor em
+   requisição e recebido dos **últimos 12 meses**, a mesma janela da curva ABC, e a data da última
+   requisição. Médico sem CRM + UF no cadastro responde `matched: false` com zeros, e a tela explica
+   que o vínculo é pelo CRM + UF.
+7. **Curva ABC pelo faturamento (substitui a base do D-328 item 9):** a base é o **recebido no LIS**
+   (`paid_value` deduplicado, `paid_on` nos últimos 12 meses) das requisições do médico, casado como
+   no item 3. Pareto, empate, base 0 = C e agenda não mudam. Médico sem CRM + UF fica com base 0,
+   portanto C. `proposals.doctor_id` continua existindo, só não entra mais na conta. **Ordem em
+   prod:** deploy → carga do histórico (D-335 item 6) → `POST /doctors/abc/recalculate`. Sem a carga,
+   quase todo médico cairia em C até o histórico chegar.
+**Impacto:** `shared/types/{lis,doctor}.types.ts`; `backend/src/repositories/{lis-doctor-revenue,
+doctor-abc}.repository.ts`, `services/{lis-analytics,doctor,doctor-abc}.service.ts`,
+`controllers/{lis-analytics,doctor}.routes.ts`; `frontend/src/pages/{Results,Visitation/DoctorProfile}.tsx`,
+`lib/pdf/executive-report.ts`; API_CONTRACTS §10.2/§13, PAGES §14/§22b, SERVICES §20/§30.
+Inventário de isolamento: mais 1 rota (`GET /doctors/:id/revenue`; as rotas `/lis-budgets` não entram nele).

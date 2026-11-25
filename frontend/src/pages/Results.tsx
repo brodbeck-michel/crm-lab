@@ -89,7 +89,10 @@ function ImportStamp({
 
   return (
     <div className="min-w-0 text-right">
-      <p className="truncate font-body text-caption font-semibold text-neutral-800" title={fileName ?? undefined}>
+      <p
+        className="truncate font-body text-caption font-semibold text-neutral-800"
+        title={fileName ?? undefined}
+      >
         {fileName ?? (kind === 'sync' ? 'Sincronização com o Bitlab (API)' : 'Importação')}
       </p>
       <p className="font-body text-caption text-neutral-600">
@@ -232,30 +235,65 @@ export default function Results() {
     }
   }
 
+  // Todas as colunas ordenam pelo cabeçalho (CRMLAB-199); abre na ordem do servidor.
   const commissionColumns: Array<DataTableColumn<CommissionDetailRow>> = [
-    { key: 'attendantName', header: 'Atendente', render: (r) => r.attendantName },
-    { key: 'issuedCount', header: 'Orç.', render: (r) => String(r.issuedCount) },
-    { key: 'paidValue', header: 'Recebido', render: (r) => <MoneyDisplay value={r.paidValue} /> },
-    { key: 'conversionQty', header: 'Conv. %', render: (r) => `${r.conversionQty.toFixed(1)}%` },
+    {
+      key: 'attendantName',
+      sortValue: (r) => r.attendantName,
+      header: 'Atendente',
+      render: (r) => r.attendantName,
+    },
+    {
+      key: 'issuedCount',
+      sortValue: (r) => r.issuedCount,
+      header: 'Orç.',
+      render: (r) => String(r.issuedCount),
+    },
+    {
+      key: 'paidValue',
+      sortValue: (r) => r.paidValue,
+      header: 'Recebido',
+      render: (r) => <MoneyDisplay value={r.paidValue} />,
+    },
+    {
+      key: 'conversionQty',
+      sortValue: (r) => r.conversionQty,
+      header: 'Conv. %',
+      render: (r) => `${r.conversionQty.toFixed(1)}%`,
+    },
     {
       key: 'budgetCommission',
+      sortValue: (r) => r.budgetCommission,
       header: `Com. Orç. (${commissionSettings?.commissionBudgetPct ?? 0}%)`,
       render: (r) => <MoneyDisplay value={r.budgetCommission} />,
     },
-    { key: 'examsValue', header: 'Vendas Exames', render: (r) => <MoneyDisplay value={r.examsValue} /> },
+    {
+      key: 'examsValue',
+      sortValue: (r) => r.examsValue,
+      header: 'Vendas Exames',
+      render: (r) => <MoneyDisplay value={r.examsValue} />,
+    },
     {
       key: 'examsCommission',
+      sortValue: (r) => r.examsCommission,
       header: `Com. Exames (${commissionSettings?.commissionExamsPct ?? 0}%)`,
       render: (r) => <MoneyDisplay value={r.examsCommission} />,
     },
-    { key: 'checkupValue', header: 'Vendas Check-up', render: (r) => <MoneyDisplay value={r.checkupValue} /> },
+    {
+      key: 'checkupValue',
+      sortValue: (r) => r.checkupValue,
+      header: 'Vendas Check-up',
+      render: (r) => <MoneyDisplay value={r.checkupValue} />,
+    },
     {
       key: 'checkupCommission',
+      sortValue: (r) => r.checkupCommission,
       header: `Com. Check-up (${commissionSettings?.commissionCheckupPct ?? 0}%)`,
       render: (r) => <MoneyDisplay value={r.checkupCommission} />,
     },
     {
       key: 'totalCommission',
+      sortValue: (r) => r.totalCommission,
       header: 'Comissão Total',
       align: 'right',
       render: (r) => <MoneyDisplay value={r.totalCommission} emphasis />,
@@ -274,7 +312,11 @@ export default function Results() {
                 Importar
               </Button>
             )}
-            <Button variant="primary" onClick={handleExportExecutivePdf} disabled={!executiveReport}>
+            <Button
+              variant="primary"
+              onClick={handleExportExecutivePdf}
+              disabled={!executiveReport}
+            >
               Exportar relatório executivo
             </Button>
           </>

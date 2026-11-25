@@ -1,19 +1,14 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LIS_DOCTOR_NO_DOCTOR_KEY, type LisDoctorRevenueRow } from '@crm-lab/shared';
 import { useLisDoctorRevenue } from '@/api/lis';
-import { Select } from '@/components/ui';
-import { DataTable, MoneyDisplay } from '@/components/shared';
-import type { DataTableColumn } from '@/components/shared';
+import { Button, Select, useToast } from '@/components/ui';
+import { DataTable, MoneyDisplay, sortRows } from '@/components/shared';
+import type { DataTableColumn, DataTableSort } from '@/components/shared';
+import { generateDoctorRevenueExcel } from '@/lib/excel/doctor-revenue-report';
 import { useVisitationResponsibles } from '@/pages/Visitation/visitation-access';
 
-export type DoctorRevenueSort = 'paidValue' | 'requisitionValue' | 'requisitionCount';
-
-const SORT_OPTIONS: Array<{ value: DoctorRevenueSort; label: string }> = [
-  { value: 'paidValue', label: 'Recebido' },
-  { value: 'requisitionValue', label: 'Em requisição' },
-  { value: 'requisitionCount', label: 'Requisições' },
-];
+const DEFAULT_SORT: DataTableSort = { key: 'paidValue', direction: 'desc' };
 
 export interface DoctorRevenueTableProps {
   period: { startDate: string; endDate: string };
@@ -24,7 +19,11 @@ export interface DoctorRevenueTableProps {
 function doctorLabel(row: LisDoctorRevenueRow): { name: string; detail: string; muted: boolean } {
   if (row.doctorKey === null) return { name: 'Sem médico informado', detail: '', muted: true };
   if (row.doctorKey === LIS_DOCTOR_NO_DOCTOR_KEY) {
-    return { name: 'Sem médico (CRM 1)', detail: 'Sem pedido médico ou solicitado pela enfermagem', muted: true };
+    return {
+      name: 'Sem médico (CRM 1)',
+      detail: 'Sem pedido médico ou solicitado pela enfermagem',
+      muted: true,
+    };
   }
   const name = row.doctorName ?? '—';
   const council = row.council && row.council !== 'CRM' ? row.council : 'CRM';
@@ -39,20 +38,17 @@ function doctorLabel(row: LisDoctorRevenueRow): { name: string; detail: string; 
 export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorRevenueTableProps) {
   const navigate = useNavigate();
   const { responsibles } = useVisitationResponsibles();
+  const { toast } = useToast();
   const [responsibleId, setResponsibleId] = useState('');
-  const [sortBy, setSortBy] = useState<DoctorRevenueSort>('paidValue');
+  // Espelha a ordem do `DataTable` para o Excel sair na ordem da tela (CRMLAB-199).
+  const [sort, setSort] = useState<DataTableSort>(DEFAULT_SORT);
 
   const { data, isLoading } = useLisDoctorRevenue(
     { ...period, insuranceId, responsibleId: responsibleId || undefined },
     { enabled },
   );
 
-  const rows = useMemo(() => {
-    const list = [...(data?.rows ?? [])];
-    // O servidor já manda por recebido; as outras ordens são só de leitura.
-    if (sortBy !== 'paidValue') list.sort((a, b) => b[sortBy] - a[sortBy] || b.paidValue - a.paidValue);
-    return list;
-  }, [data, sortBy]);
+  const rows = data?.rows ?? [];
   const totals = data?.totals;
   const paidTotal = totals?.paidValue ?? 0;
 
@@ -61,34 +57,77 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
       key: 'doctor',
       header: 'Médico',
       minWidth: 240,
+      // "Sem médico" (CRM 1 e sem os dados) não tem nome: fica no fim, nos dois sentidos.
+      sortValue: (row) => (row.identified ? row.doctorName : null),
       render: (row) => {
         const label = doctorLabel(row);
         return (
           <div>
-            <p className={label.muted ? 'font-body italic text-neutral-600' : 'font-body font-semibold text-neutral-800'}>
+            <p
+              className={
+                label.muted
+                  ? 'font-body italic text-neutral-600'
+                  : 'font-body font-semibold text-neutral-800'
+              }
+            >
               {label.name}
             </p>
-            {label.detail && <p className="font-body text-caption text-neutral-600">{label.detail}</p>}
+            {label.detail && (
+              <p className="font-body text-caption text-neutral-600">{label.detail}</p>
+            )}
           </div>
         );
       },
     },
-    { key: 'responsible', header: 'Representante', render: (row) => row.responsibleName ?? '—' },
-    { key: 'requisitionCount', header: 'Requisições', align: 'right', render: (row) => row.requisitionCount },
+    {
+      key: 'responsible',
+      header: 'Representante',
+      sortValue: (row) => row.responsibleName,
+      render: (row) => row.responsibleName ?? '—',
+    },
+    {
+      key: 'requisitionCount',
+      header: 'Requisições',
+      align: 'right',
+      sortValue: (row) => row.requisitionCount,
+      render: (row) => row.requisitionCount,
+    },
     {
       key: 'requisitionValue',
       header: 'Em requisição',
       align: 'right',
+      sortValue: (row) => row.requisitionValue,
       render: (row) => <MoneyDisplay value={row.requisitionValue} />,
     },
-    { key: 'paidValue', header: 'Recebido', align: 'right', render: (row) => <MoneyDisplay value={row.paidValue} /> },
+    {
+      key: 'paidValue',
+      header: 'Recebido',
+      align: 'right',
+      sortValue: (row) => row.paidValue,
+      render: (row) => <MoneyDisplay value={row.paidValue} />,
+    },
     {
       key: 'share',
       header: '% do recebido',
       align: 'right',
-      render: (row) => (paidTotal > 0 ? `${((row.paidValue / paidTotal) * 100).toFixed(1).replace('.', ',')}%` : '—'),
+      sortValue: (row) => row.paidValue,
+      render: (row) =>
+        paidTotal > 0
+          ? `${((row.paidValue / paidTotal) * 100).toFixed(1).replace('.', ',')}%`
+          : '—',
     },
   ];
+
+  async function handleExportExcel() {
+    if (!totals || rows.length === 0) return;
+    const column = columns.find((c) => c.key === sort.key);
+    const ordered = column?.sortValue ? sortRows(rows, column.sortValue, sort.direction) : rows;
+    try {
+      await generateDoctorRevenueExcel(ordered, totals, period);
+    } catch {
+      toast('Não foi possível gerar o Excel.', { tone: 'attention' });
+    }
+  }
 
   return (
     <section
@@ -114,14 +153,14 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
               ]}
             />
           </div>
-          <div className="w-[176px]">
-            <Select
-              aria-label="Ordenar por"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as DoctorRevenueSort)}
-              options={SORT_OPTIONS}
-            />
-          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleExportExcel}
+            disabled={rows.length === 0}
+          >
+            Exportar em Excel
+          </Button>
         </div>
       </div>
 
@@ -129,6 +168,8 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
         columns={columns}
         rows={rows}
         rowKey={(row) => row.doctorKey ?? 'sem-medico'}
+        defaultSort={DEFAULT_SORT}
+        onSortChange={setSort}
         onRowClick={(row) => {
           if (row.doctorId) navigate(`/visitation/doctors/${row.doctorId}`);
         }}
@@ -145,8 +186,8 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
         <div className="flex flex-wrap justify-between gap-sm border-t border-neutral-300 pt-md font-body text-caption font-semibold text-neutral-800">
           <span>TOTAL</span>
           <span>
-            {totals.requisitionCount} requisições · <MoneyDisplay value={totals.requisitionValue} /> em requisição ·{' '}
-            <MoneyDisplay value={totals.paidValue} emphasis /> recebido
+            {totals.requisitionCount} requisições · <MoneyDisplay value={totals.requisitionValue} />{' '}
+            em requisição · <MoneyDisplay value={totals.paidValue} emphasis /> recebido
           </span>
         </div>
       )}

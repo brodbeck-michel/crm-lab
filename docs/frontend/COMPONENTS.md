@@ -535,6 +535,20 @@ Anatomia (padrão WhatsApp):
 - Container com min-width + overflow-x (coluna nunca colapsa)
 - Cabeçalho 11px caixa alta, régua neutral-300, linhas neutral-200, sem zebra
 - Última coluna monetária/status: alinhada à direita
+- **Ordenação por coluna (CRMLAB-199), opcional:** a coluna que tem
+  `sortValue: (row) => number | string | null` fica ordenável. O cabeçalho vira um `<button>`
+  com a seta da ordem atual, e o `<th>` recebe `aria-sort`.
+  - **1º clique:** número do maior para o menor; texto de A a Z (`localeCompare` pt-BR, sem
+    distinguir caixa e acento).
+  - **2º clique:** inverte a ordem.
+  - `null` fica sempre no fim, nos dois sentidos.
+  - `defaultSort={{ key, direction }}` define a ordem inicial; sem ele, as linhas ficam na ordem
+    recebida.
+  - A ordenação é feita no cliente, sobre as `rows` recebidas. Linha de total fica fora da tabela,
+    com a própria tela.
+  - Coluna sem `sortValue` não ordena, e tabela sem nenhum `sortValue` não muda.
+  - `onSortChange(sort)` avisa a tela quando a ordem muda, para exportar na mesma ordem. A função
+    pura `sortRows(rows, sortValue, direction)` é exportada para isso.
 
 ### Pagination
 ```tsx

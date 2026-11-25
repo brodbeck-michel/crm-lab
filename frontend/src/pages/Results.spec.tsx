@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -21,6 +21,7 @@ import * as reportsApi from '@/api/reports';
 import * as salesApi from '@/api/sales';
 import * as commissionApi from '@/api/commission-settings';
 import * as funnelRulesApi from '@/api/funnel-rules';
+import { generateDoctorRevenueExcel } from '@/lib/excel/doctor-revenue-report';
 import { DEFAULT_FUNNEL_RULES, type FunnelRules } from '@crm-lab/shared';
 
 vi.mock('@/api/lis', async () => {
@@ -44,6 +45,10 @@ vi.mock('@/pages/Visitation/visitation-access', async () => {
     useVisitationResponsibles: vi.fn(() => ({ seesAll: true, responsibles: [{ id: 'rep-1', name: 'Fátima' }] })),
   };
 });
+
+vi.mock('@/lib/excel/doctor-revenue-report', () => ({
+  generateDoctorRevenueExcel: vi.fn(() => Promise.resolve()),
+}));
 
 vi.mock('@/api/reports', async () => {
   const actual = await vi.importActual('@/api/reports');
@@ -323,6 +328,35 @@ describe('Results (/results)', () => {
     expect(screen.getByText('% Comissão: 2%')).toBeInTheDocument();
   });
 
+  it('faturamento por médico: Excel sai com as linhas e a ordem da tela (CRMLAB-199)', async () => {
+    signIn('manager');
+    renderPage();
+
+    const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
+    // Ordena por "Em requisição" do menor para o maior (2 cliques) e exporta.
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    fireEvent.click(within(card).getByRole('button', { name: 'Exportar em Excel' }));
+
+    await waitFor(() => expect(generateDoctorRevenueExcel).toHaveBeenCalledTimes(1));
+    const [rows, totals, period] = vi.mocked(generateDoctorRevenueExcel).mock.calls[0]!;
+    expect(rows.map((r) => r.requisitionValue)).toEqual([50, 300, 800]);
+    expect(totals).toEqual(doctorRevenue.totals);
+    expect(period).toEqual({ startDate: defaultLisFilters().startDate, endDate: defaultLisFilters().endDate });
+  });
+
+  it('detalhe por atendente ordena pelo cabeçalho (CRMLAB-199)', async () => {
+    signIn('manager');
+    renderPage();
+
+    await screen.findByText('Detalhe por atendente');
+    const order = () => screen.getAllByText(/^(Tainá|Carol)$/).map((el) => el.textContent);
+    // Ordem do servidor: Tainá (8296) antes de Carol (5510).
+    expect(order()).toEqual(['Tainá', 'Carol']);
+    fireEvent.click(screen.getByRole('button', { name: /Atendente/ }));
+    expect(order()).toEqual(['Carol', 'Tainá']);
+  });
+
   it('exportar comissão em PDF/Excel está disponível quando há dado', async () => {
     signIn('manager');
     renderPage();
@@ -356,16 +390,23 @@ describe('Results (/results)', () => {
     );
   });
 
-  it('faturamento por médico: ordenar por "Em requisição" reordena as linhas', async () => {
+  it('faturamento por médico: clicar no cabeçalho ordena; sem o seletor "Ordenar por" (CRMLAB-199)', async () => {
     signIn('manager');
     renderPage();
 
     const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
-    fireEvent.change(within(card).getByLabelText('Ordenar por'), { target: { value: 'requisitionValue' } });
-    const names = within(card)
-      .getAllByText(/Dra\. Ana Souza|Sem médico \(CRM 1\)|Sem médico informado/)
-      .map((el) => el.textContent);
-    expect(names).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
+    expect(within(card).queryByLabelText('Ordenar por')).not.toBeInTheDocument();
+    const names = () =>
+      within(card)
+        .getAllByText(/Dra\. Ana Souza|Sem médico \(CRM 1\)|Sem médico informado/)
+        .map((el) => el.textContent);
+    // Abre por Recebido (maior → menor).
+    expect(names()).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
+
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    expect(names()).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
+    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    expect(names()).toEqual(['Sem médico (CRM 1)', 'Sem médico informado', 'Dra. Ana Souza']);
   });
 
   it('só admin vê "Limpar base"', async () => {

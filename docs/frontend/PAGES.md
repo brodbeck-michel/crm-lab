@@ -1439,6 +1439,9 @@ check-up · **Comissão total** (soma das três comissões da linha). Linha **TO
 somando cada coluna — nunca recalculada de outro jeito que não seja a soma das linhas exibidas.
 Atendente sem venda no período aparece com as colunas de venda zeradas (`0`), não ausente da
 tabela — a base é `byAttendantDetail` (todo atendente com orçamento), `LEFT JOIN` com vendas.
+**Ordenação (CRMLAB-199):** todas as colunas ordenam pelo cabeçalho (`DataTable` ordenável). A
+tabela abre na ordem do servidor (recebido desc). A linha TOTAL fica fora, sempre no fim, e o PDF
+e o Excel de comissão seguem a ordem do servidor.
 
 Badge **"% Comissão: X%"** ao lado do botão de exportar mostra `commissionBudgetPct` (o percentual
 usado na coluna "Comissão sobre orçamento" desta mesma tabela — os outros dois percentuais
@@ -1460,10 +1463,13 @@ Cartão depois do detalhe por atendente, na mesma moldura. Fonte: `GET /lis-budg
 (API_CONTRACTS §10.2), com o período e o filtro de convênio da tela. Componente
 `components/lis/DoctorRevenueTable.tsx`.
 
-- **Cabeçalho do cartão:** título "Faturamento por médico solicitante" e dois `Select`:
+- **Cabeçalho do cartão:** título "Faturamento por médico solicitante", o `Select` de representante
+  e a ordenação pelos cabeçalhos da tabela:
   - **Representante:** "Todos os representantes" + a lista de `useVisitationResponsibles`. Escolher
     um manda `responsibleId`, e só ficam os médicos cadastrados daquela carteira;
-  - **Ordenar por:** Recebido (padrão), Em requisição ou Requisições. A ordenação é feita no cliente.
+  - **ordenação (CRMLAB-199):** clicando no cabeçalho de qualquer coluna (`DataTable` ordenável).
+    Abre por Recebido, do maior para o menor. Médico e Representante ordenam de A a Z, e as linhas
+    "Sem médico" ficam no fim. O seletor "Ordenar por" saiu.
 - **Tabela (`DataTable`):**
   - **Médico:** o nome, com "CRM 12345/SC" embaixo. A linha `no-doctor` aparece como "Sem médico
     (CRM 1)", com "Sem pedido médico ou solicitado pela enfermagem" embaixo. A linha sem os dados do
@@ -1476,6 +1482,13 @@ Cartão depois do detalhe por atendente, na mesma moldura. Fonte: `GET /lis-budg
 
   Linha com `doctorId` é clicável e abre a ficha `/visitation/doctors/:id`. Há uma linha **TOTAL**
   no fim, com `totals`.
+- **[Exportar em Excel]** (CRMLAB-199), no cabeçalho do cartão:
+  - gera `faturamento-medicos-<startDate>-<endDate>.xlsx` no cliente (`xlsx`, sem novo fetch, como o
+    Excel de comissão), em `lib/excel/doctor-revenue-report.ts`;
+  - leva as **linhas da tela**: mesmo período, convênio e representante, na **ordem da tela**;
+  - colunas Médico, Conselho, CRM, UF, Representante, Requisições, Em requisição, Recebido e % do
+    recebido, com os valores como número, mais a linha TOTAL;
+  - o botão fica desabilitado sem linhas.
 - **Vazio:** "Nenhuma requisição com médico neste período." Com representante escolhido: "Nenhum
   médico desta carteira com requisição no período."
 - **PDF Executivo:** a seção "Médicos solicitantes" fica depois de "Convênios e Dependência

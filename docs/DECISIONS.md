@@ -7917,3 +7917,40 @@ doctor-abc}.repository.ts`, `services/{lis-analytics,doctor,doctor-abc}.service.
 `controllers/{lis-analytics,doctor}.routes.ts`; `frontend/src/pages/{Results,Visitation/DoctorProfile}.tsx`,
 `lib/pdf/executive-report.ts`; API_CONTRACTS §10.2/§13, PAGES §14/§22b, SERVICES §20/§30.
 Inventário de isolamento: mais 1 rota (`GET /doctors/:id/revenue`; as rotas `/lis-budgets` não entram nele).
+
+### D-337: Consulta de orçamentos do Bitlab passa para a API nova (`api.bitlab.net.br`)
+**Contexto:** em 26/11/2026 o Bitlab (Fernando) avisou que a consulta de orçamentos passou para a
+API nova, junto com a de requisições (CRMLAB-200). O retorno é o mesmo: campos, formatos e
+paginação. Mudam o endereço e a chave. O endereço antigo (`integracoes.bitlab.net.br/webhook`)
+continua funcionando até a troca. O Bitlab pede que a gente valide em homologação antes de trocar
+em produção. A chave de produção é **nova**, diferente da atual e da de homologação, e o Bitlab só
+a libera depois da validação.
+
+Teste em homologação em 26/11/2026, com a chave de testes e a partir da máquina de desenvolvimento:
+- o envelope e os campos que o CRM lê batem com SERVICES §24.1, nos mesmos tipos (orçamento de teste
+  de 29/10/2026, sem requisição nem pagamento);
+- a API nova tem **limite de 60 chamadas por minuto por chave**. Acima disso volta `429` com
+  `{ success: false, error: "Rate Limit excedido ..." }`. O envelope de erro é em inglês, diferente
+  do `sucesso`/`erro` do contrato de orçamentos.
+
+**Decisão:** CRMLAB-201.
+1. **Endereço:** o caminho fixo passa de `/v1/bitlab/orcamentos` para `/orcamentos/consulta`.
+   `BITLAB_API_BASE_URL` continua sendo da instalação (D-185 item 1) e passa a carregar o ambiente
+   do Bitlab:
+   - `https://api.bitlab.net.br/v1` em prod (é o padrão do código);
+   - `https://api.bitlab.net.br/homologacao` na hml.
+2. **Chave:** continua por laboratório, cifrada e colada na tela (D-185). Na troca de prod, o deploy
+   com a base nova e a chave nova colada na tela vão **juntos**. A chave antiga não vale no endereço
+   novo, e a nova não vale no antigo. Entre um e outro a rodada falha com `auth` e o agendador
+   **desliga a sincronização**. Por isso a ordem é: deploy, colar a chave nova, religar a sync e
+   rodar "Sincronizar agora". A marca d'água não se perde, e a primeira rodada repõe o intervalo.
+3. **`429` vira `unavailable`**, não `contract`: a sync não grava nada, não desliga e tenta de novo
+   na próxima rodada. Com o agendador a cada 30 s (D-249), uma rodada sem paginação usa cerca de
+   2 chamadas por minuto, bem abaixo do limite.
+4. **Homologação ganha sincronização de verdade:** com a base de testes do Bitlab, a hml pode ligar
+   a sync com a chave de homologação. Antes ficava desligada por falta de sandbox. O agendador da hml
+   continua em `LIS_SYNC_INTERVAL_MS=0` por padrão, e "Sincronizar agora" basta para testar.
+
+**Impacto:** `backend/src/lib/bitlab-client.ts` (caminho e `429`), `backend/src/config/env.ts`
+(padrão de `BITLAB_API_BASE_URL`), `docker-compose.prod.yml`, `backend/.env.example`;
+SERVICES §24.1, ENVIRONMENTS, DEPLOYMENT.

@@ -1569,7 +1569,8 @@ emendar aqui o que divergir, como foi feito com a sandbox em 18/09.
 
 | Item | Valor |
 |---|---|
-| Endpoint | `POST {BITLAB_API_BASE_URL}/v1/bitlab/orcamentos` (base padrão `https://integracoes.bitlab.net.br/webhook`) |
+| Endpoint | `POST {BITLAB_API_BASE_URL}/orcamentos/consulta`. Base padrão `https://api.bitlab.net.br/v1` (prod); na hml, `https://api.bitlab.net.br/homologacao`, com base de testes de dados fictícios (D-337, desde 26/11/2026). Até o CRMLAB-201 era `https://integracoes.bitlab.net.br/webhook` + `/v1/bitlab/orcamentos`, com o mesmo retorno |
+| Limite | **60 chamadas por minuto por chave** (API nova, observado em 26/11/2026). Acima disso → `429` `{ success: false, error: "Rate Limit excedido ..." }` (envelope em inglês) |
 | Auth | header `x-api-key`. Chave errada ou ausente → `403` com corpo texto `Authorization data is wrong!` (n8n, observado em 25/09) |
 | Corpo | `{ dataInicio, dataFim, tipoData: "alteracao", pagina, tamanhoPagina }`. Datas `YYYY-MM-DD` ou `YYYY-MM-DD HH:mm:ss` |
 | Sucesso | `200` `{ sucesso: true, apiVersao: "v1", status: "LISTA" \| "SEM_RESULTADOS", avisos: string[], filtro, paginacao: { pagina, tamanhoPagina, totalRegistros, totalPaginas, temProxima }, marcaDagua: string \| null, total, orcamentos: [] }` |
@@ -1632,6 +1633,7 @@ Valor que não passa vira `null`. O upsert grava nas colunas da migração 075 (
 - `sucesso: false` com `200` é tratado como erro, pelo `status`. O código HTTP sozinho não basta.
 - `avisos[]` não vazio ou `X-API-Deprecation: true` → log `warn` `lis_sync.bitlab_deprecation`
   (uma vez por rodada).
+- `429` (limite de 60/min da API nova) → `unavailable`: nada é gravado, a sync não desliga e tenta de novo na próxima rodada (D-337).
 - Timeout de 15 s por chamada (`fetch-timeout.ts`, CRMLAB-30).
 - Datas e `marcaDagua` passam por `parseBitlabDateTime` (D-187) e saem na forma canônica
   `YYYY-MM-DD HH:mm:ss`, pelos componentes. A marca é gravada assim, comparada como texto entre as

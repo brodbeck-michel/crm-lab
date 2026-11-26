@@ -92,7 +92,7 @@ describe('BitlabClient.fetchBudgetsPage', () => {
     await client(fakeFetch(200, listResponse(), {}, captured)).fetchBudgetsPage('chave-123', QUERY);
 
     expect(captured).toHaveLength(1);
-    expect(captured[0]?.url).toBe('https://bitlab.test/webhook/v1/bitlab/orcamentos');
+    expect(captured[0]?.url).toBe('https://bitlab.test/webhook/orcamentos/consulta');
     expect(captured[0]?.init.method).toBe('POST');
     expect((captured[0]?.init.headers as Record<string, string>)['x-api-key']).toBe('chave-123');
     expect(JSON.parse(String(captured[0]?.init.body))).toEqual({ ...QUERY, tipoData: 'alteracao' });
@@ -357,6 +357,13 @@ describe('BitlabClient.fetchBudgetsPage', () => {
       throw new TypeError('fetch failed');
     }) as typeof fetch;
     expect((await failure(client(broken).fetchBudgetsPage('k', QUERY))).kind).toBe('unavailable');
+  });
+
+  it('429 (limite de 60/min da API nova) vira unavailable, nao contract (D-337)', async () => {
+    const limited = { success: false, error: 'Rate Limit excedido (HTTP 429): Limite: 60/min.' };
+    const error = await failure(client(fakeFetch(429, limited)).fetchBudgetsPage('k', QUERY));
+    expect(error.kind).toBe('unavailable');
+    expect(error.message).toContain('HTTP 429');
   });
 
   it('timeout vira unavailable', async () => {

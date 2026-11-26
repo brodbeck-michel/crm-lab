@@ -403,6 +403,8 @@ WHATSAPP_CLOUD_API_MOCK=true
 
 # CRMLAB-52: agendador da sincronização com o Bitlab desligado em homologação.
 LIS_SYNC_INTERVAL_MS=0
+# CRMLAB-201 (D-337): base de testes do Bitlab. Sem esta linha a hml aponta para a API de prod.
+BITLAB_API_BASE_URL=https://api.bitlab.net.br/homologacao
 
 # CRMLAB-59: motor de tempo do funil. Ligado (padrão 5 min) para validar na hml;
 # 0 desliga. Ele só mexe no banco da hml.

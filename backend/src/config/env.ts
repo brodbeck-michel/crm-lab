@@ -186,9 +186,10 @@ const envSchema = z
     /**
      * Sincronizacao dos orcamentos pela API do Bitlab (CRMLAB-52, D-185). A
      * CHAVE nao mora aqui: e por laboratorio, cifrada em `lis_sync_settings`.
-     * A URL base e da instalacao — o Bitlab e um so.
+     * A URL base e da instalacao — o Bitlab e um so. Desde a D-337 ela carrega o ambiente do
+     * Bitlab: `.../v1` em prod, `.../homologacao` na hml.
      */
-    BITLAB_API_BASE_URL: z.url().default('https://integracoes.bitlab.net.br/webhook'),
+    BITLAB_API_BASE_URL: z.url().default('https://api.bitlab.net.br/v1'),
     /**
      * Intervalo do agendador: 30 s (CRMLAB-79, D-249; era 2 min na D-199). `0` desliga o agendador
      * (hml, testes); "Sincronizar agora" continua.

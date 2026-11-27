@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-24 (CRMLAB-199: ordenar tabelas pelo cabeçalho)
+**Última atualização:** 2026-11-26 (CRMLAB-201: orçamentos do Bitlab na API nova)
 
 ---
 
@@ -4502,3 +4502,21 @@ Branch `feature/CRMLAB-199-ordenar-colunas`. Pedido do Michel depois do CRMLAB-1
     TOTAL.
 - Sem backend nem contrato. Testes: `DataTable.spec.tsx` (+4), `Results.spec.tsx` (+3, 1 ajustado) e
   `doctor-revenue-report.spec.ts` (+2).
+
+### 🔄 CRMLAB-201 — Orçamentos do Bitlab na API nova (2026-11-26, em homologação)
+
+Branch `feature/CRMLAB-201-bitlab-api-nova`. Decisão D-337. O Bitlab (Fernando, 26/11) passou a
+consulta de orçamentos para `api.bitlab.net.br`, com o mesmo retorno de antes, endereço novo e
+chave nova.
+- **Endereço:** `BITLAB_BUDGETS_PATH` passa a ser `/orcamentos/consulta`. O padrão de
+  `BITLAB_API_BASE_URL` (código e `docker-compose.prod.yml`) passa a ser `https://api.bitlab.net.br/v1`.
+  A hml usa `https://api.bitlab.net.br/homologacao` no `.env` dela (ENVIRONMENTS §6).
+- **`429`** (limite de 60 chamadas/min por chave) vira `unavailable` em vez de `contract`.
+- **Teste real em 26/11:** o `createBitlabClient` contra a homologação do Bitlab, com a chave de
+  testes, leu o orçamento 7 (29/10/2026) sem erro e com a marca d'água certa.
+- Testes: `bitlab-client.spec.ts` (+1 para o 429, 1 ajustado para a URL nova).
+- **Validado na hml em 27/11:** deploy de `6c81e81`, chave de testes colada na tela e "Sincronizar
+  agora" sem erro. Com a marca d'água da API antiga (24/11) vieram 0 orçamentos. Com ela limpa,
+  vieram 1 orçamento e 1 proposta, e a marca d'água foi para `2026-10-29 10:30:37`.
+- **Falta:** o Bitlab liberar a chave de prod. A troca em prod segue a ordem da D-337 item 2:
+  deploy, colar a chave nova e religar a sync.

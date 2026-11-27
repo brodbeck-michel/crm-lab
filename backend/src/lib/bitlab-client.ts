@@ -20,7 +20,8 @@ import { isBrazilUf, normalizeCrm, normalizeUf, type LisSyncErrorKind } from '@c
 import { isGatewayTimeout, withGatewayTimeout } from './fetch-timeout.js';
 import type { LisSpreadsheetRow } from './lis-spreadsheet.js';
 
-export const BITLAB_BUDGETS_PATH = '/v1/bitlab/orcamentos';
+/** Relativo a `BITLAB_API_BASE_URL`, que carrega o ambiente do Bitlab (`.../v1` ou `.../homologacao`, D-337). */
+export const BITLAB_BUDGETS_PATH = '/orcamentos/consulta';
 export const BITLAB_TIMEOUT_MS = 15_000;
 export const BITLAB_TIMEZONE = 'America/Sao_Paulo';
 
@@ -384,7 +385,8 @@ export function createBitlabClient(options: BitlabClientOptions): BitlabClient {
       }
 
       if (status === 401 || status === 403) throw new BitlabError('auth', `HTTP ${status}`);
-      if (status >= 500) throw new BitlabError('unavailable', `HTTP ${status}`);
+      // 429: limite de 60 chamadas/min por chave da API nova (D-337). Passa sozinho: tenta na proxima rodada.
+      if (status === 429 || status >= 500) throw new BitlabError('unavailable', `HTTP ${status}`);
 
       const body = unwrapArray(parseJson(raw));
       const failed = errorSchema.safeParse(body);

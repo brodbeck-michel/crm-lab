@@ -41,6 +41,7 @@ import {
 } from '../repositories/lis-sync-settings.repository.js';
 import type { AuditService } from './audit.service.js';
 import type { LisImportService } from './lis-import.service.js';
+import type { LisRequisitionSyncService } from './lis-requisition-sync.service.js';
 
 export const PAGE_SIZE = 500;
 
@@ -103,6 +104,8 @@ export interface LisSyncServiceDeps {
   audit: AuditService;
   lisImport: LisImportService;
   bitlab: BitlabClient;
+  /** Situacao das requisicoes no mesmo GET (CRMLAB-200, D-338). */
+  requisitions: LisRequisitionSyncService;
   intervalMs: number;
   initialDays: number;
   now?: () => Date;
@@ -144,7 +147,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
   const now = deps.now ?? (() => new Date());
   const intervalSeconds = Math.round(deps.intervalMs / 1000);
 
-  function present(tenantId: string, view: LisSyncSettingsView): LisIntegrationSettings {
+  async function present(tenantId: string, view: LisSyncSettingsView): Promise<LisIntegrationSettings> {
     return {
       enabled: view.enabled,
       apiKeySet: view.apiKeyMasked !== null,
@@ -155,6 +158,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       lastError: view.lastError,
       running: running.has(tenantId),
       intervalSeconds,
+      requisitions: await deps.requisitions.getStatus(tenantId),
     };
   }
 
@@ -435,7 +439,7 @@ export function createLisSyncService(deps: LisSyncServiceDeps): LisSyncService {
       });
 
       const { view, ...result } = summary;
-      return { ...result, settings: present(ctx.tenantId, view) };
+      return { ...result, settings: await present(ctx.tenantId, view) };
     },
 
     async runScheduledTick() {

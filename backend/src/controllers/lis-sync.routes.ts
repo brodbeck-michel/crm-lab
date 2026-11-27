@@ -4,6 +4,7 @@
  *   GET   /api/v1/settings/lis-integration        manager/admin
  *   PATCH /api/v1/settings/lis-integration        admin
  *   POST  /api/v1/settings/lis-integration/sync   manager/admin
+ *   POST  /api/v1/settings/lis-integration/requisitions/sync   manager/admin (202, D-338)
  *
  * Controller fino: valida o DTO, chama o service, responde. A chave nunca volta
  * na resposta (`apiKeyMasked`, D-064).
@@ -17,8 +18,17 @@ import { getContext } from '../http/context.js';
 import { denyPlatformOperator, requireAuth, requireRoles } from '../http/middleware/auth.js';
 import { validate, validated } from '../http/middleware/validate.js';
 import { createBitlabClient, type BitlabClient } from '../lib/bitlab-client.js';
+import {
+  createBitlabRequisitionsClient,
+  type BitlabRequisitionsClient,
+} from '../lib/bitlab-requisitions-client.js';
 import { createAuditService } from '../services/audit.service.js';
 import { createLisImportService } from '../services/lis-import.service.js';
+import {
+  createLisRequisitionSyncService,
+  type LisRequisitionSyncService,
+  type LisRequisitionSyncServiceDeps,
+} from '../services/lis-requisition-sync.service.js';
 import { createLisSyncService, type LisSyncService } from '../services/lis-sync.service.js';
 
 export const updateLisIntegrationSchema = z
@@ -39,19 +49,41 @@ type UpdateBody = z.infer<typeof updateLisIntegrationSchema>;
 
 export interface LisSyncModuleOverrides {
   bitlab?: BitlabClient;
+  bitlabRequisitions?: BitlabRequisitionsClient;
+  /** So teste: ritmo e espera das requisicoes (D-338 item 6). */
+  requisitionTiming?: Pick<LisRequisitionSyncServiceDeps, 'sleep' | 'callGapMs' | 'retryWaitMs'>;
   /** Relogio (so teste): fixa a janela da rodada (`initialDays`, D-253). */
   now?: () => Date;
+}
+
+/** Requisicoes (CRMLAB-200, D-338) com as mesmas deps do agendador do `main.ts`. */
+export function createLisRequisitionSyncServiceFromDeps(
+  deps: Pick<ApiModuleDeps, 'db'>,
+  overrides: LisSyncModuleOverrides = {},
+): LisRequisitionSyncService {
+  return createLisRequisitionSyncService({
+    db: deps.db,
+    audit: createAuditService(deps.db),
+    bitlab: overrides.bitlabRequisitions ?? createBitlabRequisitionsClient({ baseUrl: env.BITLAB_API_BASE_URL }),
+    since: env.LIS_REQUISITIONS_SINCE,
+    scheduleTimes: env.LIS_REQUISITIONS_SYNC_TIMES,
+    schedulerEnabled: env.LIS_SYNC_INTERVAL_MS > 0 && env.LIS_REQUISITIONS_SYNC_TIMES.length > 0,
+    ...(overrides.now ? { now: overrides.now } : {}),
+    ...(overrides.requisitionTiming ?? {}),
+  });
 }
 
 /** Monta o service com as mesmas deps do agendador do `main.ts`. */
 export function createLisSyncServiceFromDeps(
   deps: Pick<ApiModuleDeps, 'db' | 'cache' | 'wsHub'>,
   overrides: LisSyncModuleOverrides = {},
+  requisitions: LisRequisitionSyncService = createLisRequisitionSyncServiceFromDeps(deps, overrides),
 ): LisSyncService {
   const audit = createAuditService(deps.db);
   return createLisSyncService({
     db: deps.db,
     audit,
+    requisitions,
     lisImport: createLisImportService({ db: deps.db, cache: deps.cache, audit, wsHub: deps.wsHub }),
     bitlab: overrides.bitlab ?? createBitlabClient({ baseUrl: env.BITLAB_API_BASE_URL }),
     intervalMs: env.LIS_SYNC_INTERVAL_MS,
@@ -67,7 +99,8 @@ function handle(fn: (req: Request, res: Response) => Promise<void>): RequestHand
 }
 
 function buildLisSyncModule(deps: ApiModuleDeps, overrides: LisSyncModuleOverrides): ApiModule {
-  const service = createLisSyncServiceFromDeps(deps, overrides);
+  const requisitions = createLisRequisitionSyncServiceFromDeps(deps, overrides);
+  const service = createLisSyncServiceFromDeps(deps, overrides, requisitions);
   const router = Router();
 
   router.get(
@@ -106,6 +139,20 @@ function buildLisSyncModule(deps: ApiModuleDeps, overrides: LisSyncModuleOverrid
     handle(async (req, res) => {
       const body: LisSyncRunResult = await service.runNow(getContext(req));
       res.status(200).json(body);
+    }),
+  );
+
+  // "Sincronizar requisicoes agora" (CRMLAB-200, D-338): responde 202 e roda em segundo plano.
+  router.post(
+    '/requisitions/sync',
+    requireAuth(),
+    denyPlatformOperator(),
+    requireRoles('manager', 'admin'),
+    handle(async (req, res) => {
+      const ctx = getContext(req);
+      await requisitions.startNow(ctx);
+      const body: LisIntegrationSettings = await service.getSettings(ctx);
+      res.status(202).json(body);
     }),
   );
 

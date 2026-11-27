@@ -102,38 +102,32 @@ async function doctor(tenantId: string, name: string, crm: string | null = Strin
 let reqSeq = 0;
 
 /**
- * Requisicao do LIS paga (D-336 item 7: a base da curva e o RECEBIDO no LIS). O medico vem do
- * cadastro `doctorId` (CRM + UF dele); `null` = requisicao sem medico. `paidOn: null` = nao paga.
+ * Requisicao do LIS (D-338 item 4: a base da curva e o VALOR DA REQUISICAO, paciente + convenio,
+ * pela data da requisicao). O medico vem do cadastro `doctorId` (CRM + UF dele); `null` =
+ * requisicao sem medico. `kind: 'convenio'` poe o valor no convenio, sem pagamento.
  */
 async function sale(
   tenantId: string,
   doctorId: string | null,
-  paidValue: number,
-  options: { paidOn?: string | null; council?: string; crm?: string } = {},
+  value: number,
+  options: { requestedOn?: string; council?: string; crm?: string; kind?: 'particular' | 'convenio' } = {},
 ): Promise<void> {
   reqSeq += 1;
   await db.withoutTenant(async (tx) => {
-    const imp = await tx.query<{ id: string }>(
-      `INSERT INTO lis_imports (tenant_id, kind, file_name, status) VALUES ($1, 'sync', NULL, 'completed') RETURNING id`,
-      [tenantId],
-    );
     const doc = doctorId
       ? (await tx.query<{ name: string; crm: string; crm_uf: string }>('SELECT name, crm, crm_uf FROM doctors WHERE id = $1', [doctorId])).rows[0]
       : undefined;
-    const paidOn = options.paidOn === undefined ? '2026-10-01' : options.paidOn;
+    const convenio = options.kind === 'convenio';
     await tx.query(
-      `INSERT INTO lis_budgets (tenant_id, number, issued_on, insurance_1, value_1, requisition_number,
-         requisition_value, paid_value, paid_on, import_id, requesting_doctor_name, requesting_doctor_council,
-         requesting_doctor_crm, requesting_doctor_uf)
-       VALUES ($1, $2, '2026-09-01', 'PARTICULAR', $3, $4, $3, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO lis_requisitions (tenant_id, number, requested_on, patient_value, insurance_value,
+         requesting_doctor_name, requesting_doctor_council, requesting_doctor_crm, requesting_doctor_uf)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [
         tenantId,
-        `ORC-${reqSeq}`,
-        paidValue,
         `01-${reqSeq}`,
-        paidOn === null ? null : paidValue,
-        paidOn,
-        imp.rows[0]?.id,
+        options.requestedOn ?? '2026-10-01',
+        convenio ? 0 : value,
+        convenio ? value : 0,
         doc?.name ?? null,
         doc ? (options.council ?? 'CRM') : null,
         doc ? (options.crm ?? doc.crm) : null,
@@ -159,17 +153,17 @@ function service() {
 }
 
 describe('DoctorAbcService.recalculateTenant', () => {
-  it('base = recebido no LIS dos últimos 12 meses (D-336); resto não conta', async () => {
+  it('base = valor da requisição (paciente + convênio) dos últimos 12 meses (D-338); resto não conta', async () => {
     const top = await doctor(tenantA.id, 'Dr. Top');
     const mid = await doctor(tenantA.id, 'Dr. Mid');
     const none = await doctor(tenantA.id, 'Dr. Sem venda');
     const noCrm = await doctor(tenantA.id, 'Dr. Sem CRM', null);
     await sale(tenantA.id, top, 800);
     await sale(tenantA.id, top, 100.5);
-    await sale(tenantA.id, mid, 99.5);
-    // não contam: não paga, paga fora da janela, sem médico, outro conselho, proposta ganha
-    await sale(tenantA.id, mid, 5000, { paidOn: null });
-    await sale(tenantA.id, mid, 5000, { paidOn: '2025-11-01' });
+    // Convênio puro, sem pagamento do paciente: conta (é o motivo da D-338).
+    await sale(tenantA.id, mid, 99.5, { kind: 'convenio' });
+    // não contam: requisitada fora da janela, sem médico, outro conselho, proposta ganha
+    await sale(tenantA.id, mid, 5000, { requestedOn: '2025-11-01' });
     await sale(tenantA.id, null, 5000);
     await sale(tenantA.id, mid, 5000, { council: 'CRO' });
     const proposal = await createProposal({ tenantId: tenantA.id, status: 'ganho', totalPrice: 9000, db });

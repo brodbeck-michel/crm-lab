@@ -203,7 +203,18 @@ export async function resolveInsuranceId(
   tenantId: string,
   row: LisSpreadsheetRow,
 ): Promise<string | null> {
-  const name = principalInsuranceName(row);
+  return resolveInsuranceIdByName(tx, tenantId, principalInsuranceName(row));
+}
+
+/**
+ * Mesma resolucao por um nome solto (requisicoes do Bitlab, D-338 item 5): `PARTICULAR`/vazio ->
+ * `null`; inexistente -> criado (D-114).
+ */
+export async function resolveInsuranceIdByName(
+  tx: DbTx,
+  tenantId: string,
+  name: string | null,
+): Promise<string | null> {
   if (isParticular(name)) return null;
   const trimmedName = (name as string).trim();
 

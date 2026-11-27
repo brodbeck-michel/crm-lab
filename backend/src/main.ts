@@ -11,7 +11,10 @@ import { refreshSessionIsLive } from './services/auth.service.js';
 import { createWsHub } from './lib/ws-hub.js';
 import { deleteExpiredOrRevoked } from './repositories/refresh-token.repository.js';
 import { deleteExpiredOrUsed as deleteExpiredResetTokens } from './repositories/password-reset-token.repository.js';
-import { createLisSyncServiceFromDeps } from './controllers/lis-sync.routes.js';
+import {
+  createLisRequisitionSyncServiceFromDeps,
+  createLisSyncServiceFromDeps,
+} from './controllers/lis-sync.routes.js';
 import { createDoctorAbcServiceFromDeps } from './controllers/doctor.routes.js';
 import { createFunnelTimerService } from './services/funnel-timer.service.js';
 import { syncEvolutionWebhooks } from './services/channel-settings.service.js';
@@ -151,6 +154,16 @@ async function bootstrap(): Promise<void> {
       void lisSync.runScheduledTick();
     }, env.LIS_SYNC_INTERVAL_MS);
     lisSyncInterval.unref();
+
+    // Requisicoes do Bitlab (CRMLAB-200, D-338): tique a cada 60 s, roda nos horarios de
+    // `LIS_REQUISITIONS_SYNC_TIMES` (07:00 e 13:00 de Brasilia). Vazio desliga.
+    if (env.LIS_REQUISITIONS_SYNC_TIMES.length > 0) {
+      const lisRequisitions = createLisRequisitionSyncServiceFromDeps({ db });
+      const lisRequisitionsInterval = setInterval(() => {
+        void lisRequisitions.runScheduledTick();
+      }, 60_000);
+      lisRequisitionsInterval.unref();
+    }
   }
 
   // =========================================================================

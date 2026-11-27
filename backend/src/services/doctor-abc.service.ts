@@ -2,7 +2,7 @@
  * DoctorAbcService — curva ABC automatica dos medicos (SERVICES.md §30,
  * CRMLAB-188, D-328 item 9).
  *
- *  - base = RECEBIDO no LIS nos ultimos 12 meses, das requisicoes casadas ao
+ *  - base = VALOR DA REQUISICAO no LIS nos ultimos 12 meses (D-338; era o recebido), das requisicoes casadas ao
  *    medico por CRM + UF (D-336 item 7; antes eram as propostas `ganho`);
  *  - Pareto por tenant (`classifyAbc`): A ate 80% do acumulado, B ate 95%,
  *    C o resto e quem nao vendeu;

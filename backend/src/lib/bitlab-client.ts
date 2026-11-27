@@ -251,20 +251,43 @@ type BitlabBudget = z.infer<typeof budgetSchema>;
 const DOCTOR_CRM_MAX = 20;
 
 /** Medico solicitante normalizado (D-335 item 1). O que nao passa vira null. */
-function requestingDoctorOf(budget: BitlabBudget): Pick<
-  LisSpreadsheetRow,
-  'requestingDoctorName' | 'requestingDoctorCouncil' | 'requestingDoctorCrm' | 'requestingDoctorUf'
-> {
-  const name = budget.MEDICO_SOLICITANTE?.trim().slice(0, 255) ?? null;
-  const council = budget.CONSELHO_MEDICO?.trim().toUpperCase() ?? null;
-  const crm = normalizeCrm(budget.CRM_MEDICO);
-  const uf = normalizeUf(budget.UF_CRM_MEDICO);
+export interface RequestingDoctor {
+  requestingDoctorName: string | null;
+  requestingDoctorCouncil: string | null;
+  requestingDoctorCrm: string | null;
+  requestingDoctorUf: string | null;
+}
+
+/**
+ * Normaliza o medico solicitante vindo do Bitlab (D-335 item 1). Usada pelos orcamentos e pelas
+ * requisicoes (D-338 item 5): a mesma regra nas duas fontes.
+ */
+export function normalizeRequestingDoctor(
+  name: string | null,
+  council: string | null,
+  crmRaw: string | null,
+  ufRaw: string | null,
+): RequestingDoctor {
+  const trimmedName = name?.trim().slice(0, 255) ?? null;
+  const upperCouncil = council?.trim().toUpperCase() ?? null;
+  const crm = normalizeCrm(crmRaw);
+  const uf = normalizeUf(ufRaw);
   return {
-    requestingDoctorName: name,
-    requestingDoctorCouncil: council !== null && council.length <= 10 ? council : null,
+    requestingDoctorName: trimmedName === '' ? null : trimmedName,
+    requestingDoctorCouncil:
+      upperCouncil !== null && upperCouncil !== '' && upperCouncil.length <= 10 ? upperCouncil : null,
     requestingDoctorCrm: crm !== null && crm.length <= DOCTOR_CRM_MAX ? crm : null,
     requestingDoctorUf: uf !== null && isBrazilUf(uf) ? uf : null,
   };
+}
+
+function requestingDoctorOf(budget: BitlabBudget): RequestingDoctor {
+  return normalizeRequestingDoctor(
+    budget.MEDICO_SOLICITANTE,
+    budget.CONSELHO_MEDICO,
+    budget.CRM_MEDICO,
+    budget.UF_CRM_MEDICO,
+  );
 }
 
 /** Um orcamento da API -> a MESMA linha interna que a planilha produz (§11.10). */

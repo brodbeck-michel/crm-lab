@@ -1,17 +1,16 @@
 /**
- * Faturamento por médico solicitante (CRMLAB-198, D-336). Só SQL.
+ * Faturamento por médico solicitante (CRMLAB-198, D-336; fonte trocada na D-338). Só SQL.
  *
- * É o ÚNICO lugar que liga `lis_budgets` a `doctors` (D-335 item 5): o relatório
- * (`GET /lis-budgets/by-doctor`), a ficha (`GET /doctors/:id/revenue`) e a base da curva
- * ABC (`doctor-abc.repository.ts`) usam os mesmos CTEs daqui.
+ * Desde a D-338 (CRMLAB-200) lê `lis_requisitions` (SCHEMA §54): TODAS as requisições do Bitlab,
+ * com ou sem orçamento, uma linha por requisição, sem dedupe. É o ÚNICO lugar que liga o LIS a
+ * `doctors`: o relatório (`GET /lis-budgets/by-doctor`), a ficha (`GET /doctors/:id/revenue`) e
+ * a base da curva ABC (`doctor-abc.repository.ts`) usam os mesmos trechos daqui.
  *
- * Regras (D-336 itens 1–3):
- *  - médico da requisição = o de qualquer linha dela com o médico preenchido, a de
- *    `updated_at` mais recente (`doctorOfRequisitionCte`);
- *  - valores = a linha da dedupe por requisição (maior `paid_value`, BUSINESS_RULES §11.2),
- *    a mesma dos KPIs de Resultados — os totais batem;
+ * Regras (D-336 itens 2–3, D-338 itens 3–5):
+ *  - valor da requisição = `total_value` (paciente líquido + convênio), pela data da requisição;
+ *  - recebido = pagamentos `ativo` do paciente, pela data do pagamento;
  *  - identificado = CRM com `LIS_DOCTOR_MIN_CRM_DIGITS`+ dígitos e UF; abaixo disso é o coringa
- *    do Bitlab (CRM `1`: sem médico ou pedido da enfermagem), uma linha só `no-doctor`;
+ *    do Bitlab (CRM `1`), uma linha só `no-doctor`; sem campo de médico nenhum = `null`;
  *  - vínculo com `doctors` = identificado, CRM + UF, conselho `CRM` ou vazio.
  */
 import { LIS_DOCTOR_MIN_CRM_DIGITS, LIS_DOCTOR_NO_DOCTOR_KEY } from '@crm-lab/shared';
@@ -19,29 +18,14 @@ import type { DbTx } from '../db/types.js';
 import { summaryFilterClauses, type SummaryFilters } from './lis-analytics.repository.js';
 import { toNumber } from './row-mappers.js';
 
-/**
- * CTE `doc(requisition_number, name, council, crm, uf, identified)`. `tenantParam` é o
- * placeholder do tenant (`$1`).
- */
-export function doctorOfRequisitionCte(tenantParam: string): string {
-  return `doc AS (
-       SELECT requisition_number, name, council, crm, uf,
-              (crm IS NOT NULL AND length(crm) >= ${LIS_DOCTOR_MIN_CRM_DIGITS} AND uf IS NOT NULL) AS identified
-         FROM (
-           SELECT DISTINCT ON (requisition_number) requisition_number,
-                  requesting_doctor_name AS name, requesting_doctor_council AS council,
-                  requesting_doctor_crm AS crm, requesting_doctor_uf AS uf
-             FROM lis_budgets
-            WHERE tenant_id = ${tenantParam} AND requisition_number IS NOT NULL
-              AND (requesting_doctor_name IS NOT NULL OR requesting_doctor_crm IS NOT NULL)
-            ORDER BY requisition_number, updated_at DESC
-         ) latest
-     )`;
-}
+/** Requisição `r` com médico identificado (D-336 item 2). */
+const IDENTIFIED = `(r.requesting_doctor_crm IS NOT NULL
+   AND length(r.requesting_doctor_crm) >= ${LIS_DOCTOR_MIN_CRM_DIGITS}
+   AND r.requesting_doctor_uf IS NOT NULL)`;
 
-/** Condição de "esta requisição é deste cadastro" (`d` = `doctors`, `doc` = CTE acima). */
-export const DOCTOR_MATCH = `doc.identified AND doc.crm = d.crm AND doc.uf = d.crm_uf
-                             AND (doc.council IS NULL OR doc.council = 'CRM')`;
+/** Condição de "esta requisição (`r`) é deste cadastro (`d`)" (D-335 item 5). */
+export const DOCTOR_MATCH = `${IDENTIFIED} AND r.requesting_doctor_crm = d.crm AND r.requesting_doctor_uf = d.crm_uf
+                             AND (r.requesting_doctor_council IS NULL OR r.requesting_doctor_council = 'CRM')`;
 
 export interface DoctorRevenueRowDb {
   doctorKey: string | null;
@@ -60,7 +44,7 @@ export interface DoctorRevenueRowDb {
 
 /**
  * Uma linha por médico (chave do D-336 item 2) com as duas janelas. `responsibleId` deixa só os
- * médicos cadastrados daquela carteira.
+ * médicos cadastrados daquela carteira. Os filtros de convênio/atendente valem sobre a requisição.
  */
 export async function getDoctorRevenue(
   tx: DbTx,
@@ -93,38 +77,38 @@ export async function getDoctorRevenue(
     paid_count: number | string;
     paid_value: string | number | null;
   }>(
-    `WITH ${doctorOfRequisitionCte('$1')},
-     issued AS (
-       SELECT DISTINCT ON (requisition_number) requisition_number, requisition_value, issued_on
-         FROM lis_budgets
-        WHERE tenant_id = $1 AND requisition_number IS NOT NULL
-          AND issued_on BETWEEN ${start} AND ${end}${extraSql}
-        ORDER BY requisition_number, paid_value DESC
+    `WITH req AS (
+       SELECT r.id, r.total_value, r.requested_on,
+              r.requesting_doctor_name AS name, r.requesting_doctor_council AS council,
+              r.requesting_doctor_crm AS crm, r.requesting_doctor_uf AS uf,
+              ${IDENTIFIED} AS identified,
+              (r.requesting_doctor_name IS NOT NULL OR r.requesting_doctor_crm IS NOT NULL) AS has_doctor
+         FROM lis_requisitions r
+        WHERE r.tenant_id = $1${extraSql}
      ),
-     paid AS (
-       SELECT requisition_number, paid_value, paid_on
-         FROM (
-           SELECT DISTINCT ON (requisition_number) requisition_number, paid_value, paid_on
-             FROM lis_budgets
-            WHERE tenant_id = $1 AND requisition_number IS NOT NULL${extraSql}
-            ORDER BY requisition_number, paid_value DESC
-         ) r
-        WHERE paid_on BETWEEN ${start} AND ${end} AND COALESCE(paid_value, 0) > 0
+     pay AS (
+       SELECT p.requisition_id, SUM(p.paid_value) AS paid_value
+         FROM lis_requisition_payments p
+        WHERE p.tenant_id = $1 AND p.status = 'ativo' AND p.paid_on BETWEEN ${start} AND ${end}
+        GROUP BY p.requisition_id
      ),
      facts AS (
-       SELECT requisition_number, COALESCE(requisition_value, 0) AS requisition_value,
-              0::numeric AS paid_value, 1 AS req, 0 AS pay, issued_on AS on_date
-         FROM issued
+       SELECT id, COALESCE(total_value, 0) AS requisition_value, 0::numeric AS paid_value,
+              1 AS req, 0 AS pay, requested_on AS on_date
+         FROM req
+        WHERE requested_on BETWEEN ${start} AND ${end}
        UNION ALL
-       SELECT requisition_number, 0, paid_value, 0, 1, paid_on FROM paid
+       SELECT req.id, 0, pay.paid_value, 0, 1, req.requested_on
+         FROM pay JOIN req ON req.id = pay.requisition_id
+        WHERE pay.paid_value > 0
      ),
      keyed AS (
-       SELECT f.*, doc.name, doc.council, doc.crm, doc.uf, COALESCE(doc.identified, false) AS identified,
-              CASE WHEN doc.identified THEN 'crm:' || COALESCE(doc.council, '') || ':' || doc.crm || ':' || doc.uf
-                   WHEN doc.requisition_number IS NOT NULL THEN '${LIS_DOCTOR_NO_DOCTOR_KEY}'
+       SELECT f.*, req.name, req.council, req.crm, req.uf, req.identified,
+              CASE WHEN req.identified THEN 'crm:' || COALESCE(req.council, '') || ':' || req.crm || ':' || req.uf
+                   WHEN req.has_doctor THEN '${LIS_DOCTOR_NO_DOCTOR_KEY}'
                    ELSE NULL END AS doctor_key
          FROM facts f
-         LEFT JOIN doc USING (requisition_number)
+         JOIN req ON req.id = f.id
      ),
      grouped AS (
        SELECT doctor_key,
@@ -150,7 +134,7 @@ export async function getDoctorRevenue(
         AND (g.council IS NULL OR g.council = 'CRM')
        LEFT JOIN users u ON u.id = d.responsible_user_id AND u.tenant_id = $1
        ${responsibleSql}
-      ORDER BY g.paid_value DESC, g.requisition_value DESC, g.name ASC NULLS LAST`,
+      ORDER BY g.requisition_value DESC, g.paid_value DESC, g.name ASC NULLS LAST`,
     params,
   );
 
@@ -179,8 +163,9 @@ export interface SingleDoctorRevenueDb {
 }
 
 /**
- * Faturamento de UM cadastro (ficha do médico, D-336 item 6). Requisição pela emissão e recebido
- * pelo pagamento, em `[start, end]`; `lastRequisitionOn` é a maior emissão de qualquer época.
+ * Faturamento de UM cadastro (ficha do médico, D-336 item 6, D-338). Requisição pela data da
+ * requisição e recebido pelo pagamento, em `[start, end]`; `lastRequisitionOn` é a maior data de
+ * requisição de qualquer época.
  */
 export async function getSingleDoctorRevenue(
   tx: DbTx,
@@ -196,33 +181,25 @@ export async function getSingleDoctorRevenue(
     paid_value: string | number | null;
     last_requisition_on: string | null;
   }>(
-    `WITH ${doctorOfRequisitionCte('$1')},
-     mine AS (
-       SELECT doc.requisition_number
-         FROM doc JOIN doctors d ON d.id = $2 AND d.tenant_id = $1 AND ${DOCTOR_MATCH}
+    `WITH mine AS (
+       SELECT r.id, r.total_value, r.requested_on
+         FROM lis_requisitions r
+         JOIN doctors d ON d.id = $2 AND d.tenant_id = $1 AND ${DOCTOR_MATCH}
+        WHERE r.tenant_id = $1
      ),
-     dedupe AS (
-       SELECT DISTINCT ON (b.requisition_number) b.requisition_number, b.requisition_value,
-              b.paid_value, b.paid_on, b.issued_on
-         FROM lis_budgets b JOIN mine USING (requisition_number)
-        WHERE b.tenant_id = $1
-        ORDER BY b.requisition_number, b.paid_value DESC
-     ),
-     issued AS (
-       SELECT DISTINCT ON (b.requisition_number) b.requisition_number, b.requisition_value
-         FROM lis_budgets b JOIN mine USING (requisition_number)
-        WHERE b.tenant_id = $1 AND b.issued_on BETWEEN $3 AND $4
-        ORDER BY b.requisition_number, b.paid_value DESC
+     paid AS (
+       SELECT p.requisition_id, SUM(p.paid_value) AS paid_value
+         FROM lis_requisition_payments p JOIN mine ON mine.id = p.requisition_id
+        WHERE p.tenant_id = $1 AND p.status = 'ativo' AND p.paid_on BETWEEN $3 AND $4
+        GROUP BY p.requisition_id
+       HAVING SUM(p.paid_value) > 0
      )
-     SELECT (SELECT COUNT(*)::int FROM issued) AS requisition_count,
-            (SELECT COALESCE(SUM(requisition_value), 0) FROM issued) AS requisition_value,
-            (SELECT COUNT(*)::int FROM dedupe
-              WHERE paid_on BETWEEN $3 AND $4 AND COALESCE(paid_value, 0) > 0) AS paid_count,
-            (SELECT COALESCE(SUM(paid_value), 0) FROM dedupe
-              WHERE paid_on BETWEEN $3 AND $4 AND COALESCE(paid_value, 0) > 0) AS paid_value,
-            (SELECT to_char(MAX(b.issued_on), 'YYYY-MM-DD')
-               FROM lis_budgets b JOIN mine USING (requisition_number)
-              WHERE b.tenant_id = $1) AS last_requisition_on`,
+     SELECT (SELECT COUNT(*)::int FROM mine WHERE requested_on BETWEEN $3 AND $4) AS requisition_count,
+            (SELECT COALESCE(SUM(total_value), 0) FROM mine WHERE requested_on BETWEEN $3 AND $4)
+              AS requisition_value,
+            (SELECT COUNT(*)::int FROM paid) AS paid_count,
+            (SELECT COALESCE(SUM(paid_value), 0) FROM paid) AS paid_value,
+            (SELECT to_char(MAX(requested_on), 'YYYY-MM-DD') FROM mine) AS last_requisition_on`,
     [tenantId, doctorId, start, end],
   );
   const row = result.rows[0];

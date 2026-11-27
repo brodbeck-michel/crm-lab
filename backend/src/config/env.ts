@@ -202,6 +202,25 @@ const envSchema = z
     /** Primeira carga, sem marca d'agua: quantos dias para tras. */
     LIS_SYNC_INITIAL_DAYS: numberFrom(90),
     /**
+     * Requisicoes do Bitlab (CRMLAB-200, D-338): primeiro dia da carga inicial e horarios do
+     * agendador (`HH:mm`, Brasilia, separados por virgula). Vazio desliga o agendador; ele tambem
+     * so existe com `LIS_SYNC_INTERVAL_MS > 0`.
+     */
+    LIS_REQUISITIONS_SINCE: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .default('2026-01-01'),
+    LIS_REQUISITIONS_SYNC_TIMES: z
+      .string()
+      .default('07:00,13:00')
+      .transform((v) =>
+        v
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t !== ''),
+      )
+      .pipe(z.array(z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/))),
+    /**
      * Motor de tempo do funil (CRMLAB-59, D-205): 5 min. `0` desliga o
      * agendador (os cartoes param de andar sozinhos e o alerta nao sai).
      */

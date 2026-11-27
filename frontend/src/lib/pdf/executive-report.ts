@@ -87,9 +87,12 @@ export interface ExecutiveReportPdfInput {
   doctors?: LisDoctorRevenueResponse | null;
 }
 
-/** Top 10 por recebido, só quem recebeu algo (a lista do servidor já vem nessa ordem). */
+/**
+ * Top 10 por valor em requisição (D-338 item 4; era por recebido), só quem tem valor. A lista do
+ * servidor já vem nessa ordem.
+ */
 export function topDoctors(doctors: LisDoctorRevenueResponse | null | undefined): LisDoctorRevenueRow[] {
-  return (doctors?.rows ?? []).filter((row) => row.paidValue > 0).slice(0, 10);
+  return (doctors?.rows ?? []).filter((row) => row.requisitionValue > 0).slice(0, 10);
 }
 
 function doctorPdfLabel(row: LisDoctorRevenueRow): string {
@@ -265,22 +268,22 @@ export async function generateExecutiveReportPdf(input: ExecutiveReportPdfInput)
     ) + 8;
   }
 
-  // Médicos solicitantes (CRMLAB-198, D-336 item 5): top 10 por recebido, dos mesmos dados de
+  // Médicos solicitantes (CRMLAB-198, D-336 item 5; D-338): top 10 por em requisição, dos mesmos dados de
   // `/results`. Sem linhas (ou com filtro de convênio, que a tela manda como null), não sai.
   const doctorRows = topDoctors(input.doctors);
   if (doctorRows.length) {
     y = space(y, 180, 'Página 3 — Convênios e Dependência Comercial');
-    y = sectionTitle(doc, palette, y, 'Médicos Solicitantes (top 10 por recebido)');
-    const doctorsPaid = input.doctors?.totals.paidValue ?? 0;
+    y = sectionTitle(doc, palette, y, 'Médicos Solicitantes (top 10 por valor em requisição)');
+    const doctorsRequisition = input.doctors?.totals.requisitionValue ?? 0;
     autoTable(doc, {
       startY: y,
-      head: [['Médico', 'Requisições', 'Em requisição', 'Recebido', '% da receita']],
+      head: [['Médico', 'Requisições', 'Em requisição', 'Recebido', '% em requisição']],
       body: doctorRows.map((row) => [
         doctorPdfLabel(row),
         String(row.requisitionCount),
         brl(row.requisitionValue),
         brl(row.paidValue),
-        pctText(share(row.paidValue, doctorsPaid)),
+        pctText(share(row.requisitionValue, doctorsRequisition)),
       ]),
       ...tableTheme(palette),
       columnStyles: { 1: { halign: 'center' }, 4: { halign: 'right' } },

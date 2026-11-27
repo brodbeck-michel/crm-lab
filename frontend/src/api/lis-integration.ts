@@ -3,6 +3,7 @@ import type {
   LisSyncRunResult,
   UpdateLisIntegrationRequest,
 } from '@crm-lab/shared';
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { http } from './client';
 import { queryKeys, queryScopes } from './query-keys';
@@ -19,13 +20,36 @@ export const lisIntegrationApi = {
     http.patch<LisIntegrationSettings>('/settings/lis-integration', body),
 
   sync: () => http.post<LisSyncRunResult>('/settings/lis-integration/sync', {}),
+
+  /** Requisições (CRMLAB-200, D-338): responde 202 na hora e roda em segundo plano. */
+  syncRequisitions: () =>
+    http.post<LisIntegrationSettings>('/settings/lis-integration/requisitions/sync', {}),
 };
 
+/** Enquanto as requisições sincronizam, consulta a cada 5 s (PAGES §20). */
+const REQUISITIONS_POLL_MS = 5000;
+
 export function useLisIntegration() {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: queryKeys.lisIntegration(),
     queryFn: () => lisIntegrationApi.get(),
+    refetchInterval: (q) => (q.state.data?.requisitions.running ? REQUISITIONS_POLL_MS : false),
   });
+
+  // Quando a rodada de requisições termina, o faturamento por médico (Resultados) e a ficha do
+  // médico mudam (D-338): invalida os dois.
+  const running = query.data?.requisitions.running ?? false;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void queryClient.invalidateQueries({ queryKey: queryScopes.lisBudgets });
+      void queryClient.invalidateQueries({ queryKey: ['doctors', 'revenue'] });
+    }
+    wasRunning.current = running;
+  }, [running, queryClient]);
+
+  return query;
 }
 
 export function useUpdateLisIntegration() {
@@ -52,5 +76,14 @@ export function useRunLisSync() {
         void queryClient.invalidateQueries({ queryKey: queryScopes.reportsExecutive });
       }
     },
+  });
+}
+
+export function useRunLisRequisitionsSync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => lisIntegrationApi.syncRequisitions(),
+    onSuccess: (settings) => queryClient.setQueryData(queryKeys.lisIntegration(), settings),
   });
 }

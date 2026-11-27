@@ -16,12 +16,14 @@ vi.mock('@/api/lis-integration', async () => {
     useLisIntegration: vi.fn(),
     useUpdateLisIntegration: vi.fn(),
     useRunLisSync: vi.fn(),
+    useRunLisRequisitionsSync: vi.fn(),
   };
 });
 
 const useLisIntegration = vi.mocked(lisIntegrationApi.useLisIntegration);
 const useUpdateLisIntegration = vi.mocked(lisIntegrationApi.useUpdateLisIntegration);
 const useRunLisSync = vi.mocked(lisIntegrationApi.useRunLisSync);
+const useRunLisRequisitionsSync = vi.mocked(lisIntegrationApi.useRunLisRequisitionsSync);
 
 const OFF: LisIntegrationSettings = {
   enabled: false,
@@ -33,6 +35,16 @@ const OFF: LisIntegrationSettings = {
   lastError: null,
   running: false,
   intervalSeconds: 30,
+  requisitions: {
+    watermark: null,
+    initialLoad: { since: '2026-01-01', nextDay: null, done: false },
+    lastRunAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    running: false,
+    scheduleTimes: ['07:00', '13:00'],
+    total: 0,
+  },
 };
 
 const ON: LisIntegrationSettings = {
@@ -64,12 +76,14 @@ function renderPage() {
 describe('LisIntegration (/settings/lis-integration)', () => {
   const mockUpdate = vi.fn();
   const mockSync = vi.fn();
+  const mockRequisitions = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     useLisIntegration.mockReturnValue(querySuccess(OFF));
     useUpdateLisIntegration.mockReturnValue(mutationIdle(mockUpdate));
     useRunLisSync.mockReturnValue(mutationIdle(mockSync));
+    useRunLisRequisitionsSync.mockReturnValue(mutationIdle(mockRequisitions));
   });
 
   afterEach(() => {
@@ -169,5 +183,57 @@ describe('LisIntegration (/settings/lis-integration)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sincronizar agora' }));
 
     expect(await screen.findByText('O Bitlab não respondeu.')).toBeInTheDocument();
+  });
+
+  describe('Requisições (CRMLAB-200, D-338)', () => {
+    it('carga não feita: mostra o estado e dispara a sincronização de requisições', async () => {
+      signIn('manager');
+      useLisIntegration.mockReturnValue(querySuccess(ON));
+      renderPage();
+
+      expect(screen.getByText('Carga inicial não feita')).toBeInTheDocument();
+      expect(screen.getByText('Atualiza às 07:00 e 13:00')).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Sincronizar requisições agora' }));
+      expect(mockRequisitions).toHaveBeenCalled();
+    });
+
+    it('carga em andamento mostra o percentual; terminada mostra o total', () => {
+      signIn('admin');
+      useLisIntegration.mockReturnValue(
+        querySuccess({
+          ...ON,
+          requisitions: { ...ON.requisitions, initialLoad: { since: '2026-01-01', nextDay: '2026-01-02', done: false } },
+        }),
+      );
+      const { unmount } = renderPage();
+      expect(screen.getByText(/^Carga inicial: \d+%$/)).toBeInTheDocument();
+      unmount();
+
+      useLisIntegration.mockReturnValue(
+        querySuccess({
+          ...ON,
+          requisitions: {
+            ...ON.requisitions,
+            watermark: '2026-11-27 13:00:00',
+            initialLoad: { since: '2026-01-01', nextDay: null, done: true },
+            total: 41230,
+            scheduleTimes: [],
+          },
+        }),
+      );
+      renderPage();
+      expect(screen.getByText('Em dia · 41.230 requisições')).toBeInTheDocument();
+      expect(screen.getByText('Só pelo botão')).toBeInTheDocument();
+    });
+
+    it('desligada: botão de requisições bloqueado; erro aparece em destaque', () => {
+      signIn('admin');
+      useLisIntegration.mockReturnValue(
+        querySuccess({ ...OFF, requisitions: { ...OFF.requisitions, lastError: 'O Bitlab recusou a chave para as requisições.' } }),
+      );
+      renderPage();
+      expect(screen.getByRole('button', { name: 'Sincronizar requisições agora' })).toBeDisabled();
+      expect(screen.getByText('O Bitlab recusou a chave para as requisições.')).toBeInTheDocument();
+    });
   });
 });

@@ -1,7 +1,12 @@
 import { useState } from 'react';
-import type { LisIntegrationSettings } from '@crm-lab/shared';
+import type { LisIntegrationSettings, LisRequisitionsSyncStatus } from '@crm-lab/shared';
 import { ApiError } from '@/api/client';
-import { useLisIntegration, useRunLisSync, useUpdateLisIntegration } from '@/api/lis-integration';
+import {
+  useLisIntegration,
+  useRunLisRequisitionsSync,
+  useRunLisSync,
+  useUpdateLisIntegration,
+} from '@/api/lis-integration';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageContainer, PageHeader } from '@/components/layout';
 import { Button, Chip, PasswordInput, Toggle, useToast } from '@/components/ui';
@@ -20,6 +25,7 @@ export default function LisIntegration() {
   const { data, isLoading } = useLisIntegration();
   const update = useUpdateLisIntegration();
   const runSync = useRunLisSync();
+  const runRequisitions = useRunLisRequisitionsSync();
   const [apiKey, setApiKey] = useState('');
 
   if (isLoading || !data) {
@@ -90,7 +96,25 @@ export default function LisIntegration() {
     });
   }
 
+  function syncRequisitionsNow() {
+    runRequisitions.mutate(undefined, {
+      onSuccess: () => toast('Sincronização de requisições iniciada.', { tone: 'neutral' }),
+      onError: (err) => {
+        const reason = err instanceof ApiError ? err.details?.reason : undefined;
+        toast(
+          reason === 'lis_requisitions_sync_running'
+            ? 'Já existe uma sincronização de requisições em andamento.'
+            : reason === 'lis_sync_not_configured'
+              ? 'Ligue a sincronização e salve uma chave primeiro.'
+              : 'Não foi possível sincronizar as requisições.',
+          { tone: 'attention' },
+        );
+      },
+    });
+  }
+
   const syncing = data.running || runSync.isPending;
+  const requisitionsSyncing = data.requisitions.running || runRequisitions.isPending;
 
   return (
     <PageContainer>
@@ -150,6 +174,17 @@ export default function LisIntegration() {
         <p className="font-body text-caption text-neutral-600">
           Os orçamentos sincronizados aparecem em Conferência e no histórico de importações (origem: API).
         </p>
+
+        <RequisitionsStatus status={data.requisitions} />
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={syncRequisitionsNow}
+          loading={requisitionsSyncing}
+          disabled={requisitionsSyncing || !data.enabled}
+        >
+          Sincronizar requisições agora
+        </Button>
       </div>
     </PageContainer>
   );
@@ -199,6 +234,57 @@ function SyncStatus({ settings }: { settings: LisIntegrationSettings }) {
       </p>
       <p className="font-body text-caption text-neutral-600">
         Dados atualizados até: {settings.watermark ? formatWatermark(settings.watermark) : 'Nunca'}
+      </p>
+    </section>
+  );
+}
+
+/** Percentual da carga inicial: dias lidos entre `since` e hoje. */
+function loadPercent(since: string, nextDay: string): number {
+  const start = Date.parse(`${since}T00:00:00Z`);
+  const next = Date.parse(`${nextDay}T00:00:00Z`);
+  const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+  const total = (today - start) / 86_400_000 + 1;
+  if (!(total > 0)) return 0;
+  return Math.max(0, Math.min(99, Math.floor(((next - start) / 86_400_000 / total) * 100)));
+}
+
+/** Cartão "Requisições" (PAGES §20, CRMLAB-200, D-338). */
+function RequisitionsStatus({ status }: { status: LisRequisitionsSyncStatus }) {
+  let chip: React.ReactNode;
+  if (status.lastError) {
+    chip = <Chip tone="attention">Com erro</Chip>;
+  } else if (!status.initialLoad.done && status.initialLoad.nextDay) {
+    chip = <Chip tone="inactive">Carga inicial: {loadPercent(status.initialLoad.since, status.initialLoad.nextDay)}%</Chip>;
+  } else if (!status.initialLoad.done) {
+    chip = <Chip tone="inactive">Carga inicial não feita</Chip>;
+  } else {
+    chip = <Chip tone="positive">Em dia · {status.total.toLocaleString('pt-BR')} requisições</Chip>;
+  }
+
+  return (
+    <section
+      className="flex flex-col gap-xs rounded-lg border border-neutral-200 bg-neutral-100 p-lg"
+      aria-label="Sincronização de requisições"
+    >
+      <h2 className="font-heading text-section">Requisições</h2>
+      <p className="font-body text-caption text-neutral-600">
+        Todas as requisições do LIS, com ou sem orçamento. Alimentam o faturamento por médico e a curva ABC.
+      </p>
+      <div className="flex flex-wrap items-center gap-sm">
+        {chip}
+        {status.running && <span className="font-body text-caption text-neutral-600">sincronizando…</span>}
+      </div>
+      {status.lastError && (
+        <p role="alert" className="font-body text-body font-semibold text-neutral-800">
+          {status.lastError}
+        </p>
+      )}
+      <p className="font-body text-caption text-neutral-600">
+        {status.scheduleTimes.length > 0 ? `Atualiza às ${status.scheduleTimes.join(' e ')}` : 'Só pelo botão'}
+      </p>
+      <p className="font-body text-caption text-neutral-600">
+        Última sincronização com sucesso: {status.lastSuccessAt ? formatDateTime(status.lastSuccessAt) : 'Nunca'}
       </p>
     </section>
   );

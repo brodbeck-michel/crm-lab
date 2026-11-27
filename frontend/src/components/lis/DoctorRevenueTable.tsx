@@ -8,7 +8,8 @@ import type { DataTableColumn, DataTableSort } from '@/components/shared';
 import { generateDoctorRevenueExcel } from '@/lib/excel/doctor-revenue-report';
 import { useVisitationResponsibles } from '@/pages/Visitation/visitation-access';
 
-const DEFAULT_SORT: DataTableSort = { key: 'paidValue', direction: 'desc' };
+/** Abre por Em requisição (D-338 item 4; era Recebido). */
+const DEFAULT_SORT: DataTableSort = { key: 'requisitionValue', direction: 'desc' };
 
 export interface DoctorRevenueTableProps {
   period: { startDate: string; endDate: string };
@@ -138,7 +139,8 @@ export function DoctorRevenueTable({ period, insuranceId, enabled }: DoctorReven
         <div>
           <h3 className="font-heading text-section">Faturamento por médico solicitante</h3>
           <p className="mt-xs font-body text-caption text-neutral-600">
-            Requisições emitidas e valor recebido no período, pelo médico da requisição no LIS
+            Todas as requisições do LIS, com ou sem orçamento. Em requisição = paciente + convênio,
+            pela data da requisição. Recebido = pagamentos do paciente.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-sm">

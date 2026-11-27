@@ -167,7 +167,7 @@ function DoctorRevenueSection({ doctorId, onEdit }: { doctorId: string; onEdit: 
         {data.lastRequisitionOn
           ? `Última requisição em ${formatIsoDay(data.lastRequisitionOn)}. `
           : 'Nenhuma requisição deste médico no LIS. '}
-        Base da curva ABC: recebido em 12 meses.
+        Base da curva ABC: valor em requisição em 12 meses.
       </p>
     </DetailSection>
   );

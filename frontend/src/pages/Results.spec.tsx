@@ -333,8 +333,7 @@ describe('Results (/results)', () => {
     renderPage();
 
     const card = await screen.findByRole('region', { name: 'Faturamento por médico solicitante' });
-    // Ordena por "Em requisição" do menor para o maior (2 cliques) e exporta.
-    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
+    // Abre por "Em requisição" do maior para o menor (D-338); 1 clique inverte. Exporta.
     fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
     fireEvent.click(within(card).getByRole('button', { name: 'Exportar em Excel' }));
 
@@ -400,13 +399,13 @@ describe('Results (/results)', () => {
       within(card)
         .getAllByText(/Dra\. Ana Souza|Sem médico \(CRM 1\)|Sem médico informado/)
         .map((el) => el.textContent);
-    // Abre por Recebido (maior → menor).
+    // Abre por Em requisição (maior → menor, D-338).
     expect(names()).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
 
     fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
-    expect(names()).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
-    fireEvent.click(within(card).getByRole('button', { name: /Em requisição/ }));
     expect(names()).toEqual(['Sem médico (CRM 1)', 'Sem médico informado', 'Dra. Ana Souza']);
+    fireEvent.click(within(card).getByRole('button', { name: /Recebido/ }));
+    expect(names()).toEqual(['Dra. Ana Souza', 'Sem médico informado', 'Sem médico (CRM 1)']);
   });
 
   it('só admin vê "Limpar base"', async () => {

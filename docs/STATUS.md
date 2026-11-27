@@ -4515,5 +4515,8 @@ chave nova.
 - **Teste real em 26/11:** o `createBitlabClient` contra a homologação do Bitlab, com a chave de
   testes, leu o orçamento 7 (29/10/2026) sem erro e com a marca d'água certa.
 - Testes: `bitlab-client.spec.ts` (+1 para o 429, 1 ajustado para a URL nova).
-- **Falta:** sincronizar na hml, e depois o Bitlab liberar a chave de prod. A troca em prod segue a
-  ordem da D-337 item 2: deploy, colar a chave nova e religar a sync.
+- **Validado na hml em 27/11:** deploy de `6c81e81`, chave de testes colada na tela e "Sincronizar
+  agora" sem erro. Com a marca d'água da API antiga (24/11) vieram 0 orçamentos. Com ela limpa,
+  vieram 1 orçamento e 1 proposta, e a marca d'água foi para `2026-10-29 10:30:37`.
+- **Falta:** o Bitlab liberar a chave de prod. A troca em prod segue a ordem da D-337 item 2:
+  deploy, colar a chave nova e religar a sync.

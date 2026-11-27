@@ -1458,17 +1458,21 @@ nome de arquivo `comissoes-<startDate>-<endDate>.xlsx`.
   os números." e o botão **"Importar planilha"**, que abre o mesmo modal do cabeçalho. Período sem
   movimento é estado normal, não falha — e tela vazia é convite para agir, não aviso.
 
-#### Faturamento por médico solicitante (CRMLAB-198, D-336)
+#### Faturamento por médico solicitante (CRMLAB-198, D-336; requisições na D-338)
 Cartão depois do detalhe por atendente, na mesma moldura. Fonte: `GET /lis-budgets/by-doctor`
 (API_CONTRACTS §10.2), com o período e o filtro de convênio da tela. Componente
-`components/lis/DoctorRevenueTable.tsx`.
+`components/lis/DoctorRevenueTable.tsx`. **Desde a D-338 (CRMLAB-200)** os números vêm de todas as
+requisições do Bitlab, com ou sem orçamento. Uma nota abaixo do título diz: "Todas as requisições
+do LIS, com ou sem orçamento. Em requisição = paciente + convênio, pela data da requisição.
+Recebido = pagamentos do paciente." Por isso o total do cartão não bate com os KPIs de orçamento
+do topo da tela.
 
 - **Cabeçalho do cartão:** título "Faturamento por médico solicitante", o `Select` de representante
   e a ordenação pelos cabeçalhos da tabela:
   - **Representante:** "Todos os representantes" + a lista de `useVisitationResponsibles`. Escolher
     um manda `responsibleId`, e só ficam os médicos cadastrados daquela carteira;
   - **ordenação (CRMLAB-199):** clicando no cabeçalho de qualquer coluna (`DataTable` ordenável).
-    Abre por Recebido, do maior para o menor. Médico e Representante ordenam de A a Z, e as linhas
+    Abre por Em requisição, do maior para o menor (D-338 item 4; era Recebido). Médico e Representante ordenam de A a Z, e as linhas
     "Sem médico" ficam no fim. O seletor "Ordenar por" saiu.
 - **Tabela (`DataTable`):**
   - **Médico:** o nome, com "CRM 12345/SC" embaixo. A linha `no-doctor` aparece como "Sem médico
@@ -1492,8 +1496,9 @@ Cartão depois do detalhe por atendente, na mesma moldura. Fonte: `GET /lis-budg
 - **Vazio:** "Nenhuma requisição com médico neste período." Com representante escolhido: "Nenhum
   médico desta carteira com requisição no período."
 - **PDF Executivo:** a seção "Médicos solicitantes" fica depois de "Convênios e Dependência
-  Comercial". É o top 10 por recebido (só quem recebeu algo) destes mesmos dados, sem o filtro de
-  representante, com as colunas Médico, Requisições, Em requisição, Recebido e % da receita. Sem
+  Comercial". É o top 10 por **em requisição** (só quem tem valor em requisição; era por recebido
+  até a D-338) destes mesmos dados, sem o filtro de representante, com as colunas Médico,
+  Requisições, Em requisição, Recebido e % do valor em requisição. Sem
   linhas, a seção não sai. Com o filtro de convênio ligado, também não sai: o PDF é o retrato do
   período inteiro, e a regra é a mesma do comparativo e das comissões.
 
@@ -1701,6 +1706,23 @@ rótulo "Integração LIS", `requiredRoles: MANAGER_PLUS`. Fonte: `GET/PATCH
 - Rodapé: "Os orçamentos sincronizados aparecem em Conferência e no histórico de importações
   (origem: API)". O histórico de `/results` (§14) mostra `kind: "sync"` como "API" em vez do
   nome do arquivo.
+- **Cartão "Requisições" (CRMLAB-200, D-338)**, depois da chave e do toggle. Fonte:
+  `settings.requisitions` do mesmo `GET`. Usa a mesma chave e o mesmo liga/desliga.
+  - Texto fixo: "Todas as requisições do LIS, com ou sem orçamento. Alimentam o faturamento por
+    médico e a curva ABC.";
+  - um `Chip`:
+    - `attention` com o `lastError`, quando há erro;
+    - `inactive` "Carga inicial: N%", enquanto `initialLoad.done` é falso e `nextDay` não é nulo. O
+      percentual são os dias lidos entre `since` e hoje;
+    - `inactive` "Carga inicial não feita", quando não começou;
+    - `positive` "Em dia · {total} requisições", quando terminou sem erro;
+  - abaixo: "Atualiza às 07:00 e 13:00" (`scheduleTimes`), ou "Só pelo botão" quando `[]`, e
+    "Última sincronização com sucesso: DD/MM HH:MM";
+  - **[Sincronizar requisições agora]** (secundário): manager+, desabilitado sem `enabled` ou
+    enquanto `requisitions.running`. A chamada responde na hora (202). O toast diz "Sincronização
+    de requisições iniciada", e a tela consulta o `GET` a cada 5 s enquanto `running`. `CONFLICT
+    lis_requisitions_sync_running` → toast "Já existe uma sincronização de requisições em
+    andamento".
 
 ### 21. Regras (`/settings/rules`) — todos veem, gestor/admin editam (CRMLAB-56, D-190..D-194)
 
@@ -1982,7 +2004,8 @@ VISITATION_ROLES`. Fonte: `GET /doctors/:id` e a linha do tempo de `GET /doctors
 - **CRMLAB-198 (D-336) — Faturamento (LIS):** seção logo depois das seções de dados, antes da linha do tempo, com a fonte
   `GET /doctors/:id/revenue`:
   - três números dos últimos 12 meses: **Requisições**, **Em requisição** e **Recebido**;
-  - abaixo, "Última requisição em 20/11/2026" e a nota "Base da curva ABC: recebido em 12 meses";
+  - abaixo, "Última requisição em 20/11/2026" e a nota "Base da curva ABC: valor em requisição em
+    12 meses" (D-338; era recebido);
   - com `matched: false`: "Sem CRM e UF no cadastro: o faturamento do LIS é ligado ao médico pelo
     CRM + UF." e o botão [Editar].
 

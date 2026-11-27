@@ -2719,6 +2719,86 @@ CREATE INDEX IF NOT EXISTS idx_lis_budgets_tenant_doctor_crm
   `null` (D-335 item 5). Assim o médico cadastrado depois já casa com os orçamentos antigos.
 - **Só a API escreve:** linha de planilha mantém o que está gravado (D-335 item 2).
 
+### 54. Requisições do Bitlab: `lis_requisitions` e `lis_requisition_payments` (migração 076 — CRMLAB-200, D-338)
+Dono: `LisRequisitionRepository` (escrita pela `LisRequisitionSyncService`, SERVICES.md §24.2) e
+`lis-doctor-revenue`/`doctor-abc` (leitura). **Todas** as requisições do Bitlab, com ou sem
+orçamento. É a fonte única do faturamento por médico e da curva ABC (D-338 item 1). Os KPIs
+comerciais continuam em `lis_budgets` (§26).
+
+```sql
+CREATE TABLE lis_requisitions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  number VARCHAR(50) NOT NULL,           -- `requisicao` do Bitlab (ex.: 01-000132)
+  requested_at TIMESTAMP NULL,           -- `dataRequisicao`, relógio de Brasília (D-187)
+  requested_on DATE NULL,                -- o dia de `requested_at`: janela dos relatórios
+  budget_number VARCHAR(50) NULL,        -- `orcamento`; NULL = paciente direto no laboratório
+  insurance_code VARCHAR(30) NULL,
+  insurance_name VARCHAR(255) NULL,
+  insurance_type VARCHAR(20) NULL,       -- Particular | Convenio | Hibrido, cru do Bitlab
+  insurance_id UUID NULL,                -- resolvido pelo nome (BUSINESS_RULES §11.4); PARTICULAR = NULL
+  attendant_name VARCHAR(255) NULL,      -- `usuario`
+  attendant_id UUID NULL,                -- resolvido pelo nome (§11.6), nunca criado
+  requesting_doctor_name VARCHAR(255) NULL,
+  requesting_doctor_council VARCHAR(10) NULL,
+  requesting_doctor_crm VARCHAR(20) NULL,
+  requesting_doctor_uf CHAR(2) NULL,
+  patient_value NUMERIC(12, 2) NOT NULL DEFAULT 0,   -- valorCobrado - descontos + acrescimos
+  insurance_value NUMERIC(12, 2) NOT NULL DEFAULT 0, -- faturamentoConvenio.valorConvenio
+  total_value NUMERIC(12, 2) GENERATED ALWAYS AS (patient_value + insurance_value) STORED,
+  paid_value NUMERIC(12, 2) NOT NULL DEFAULT 0,      -- cobrancaPaciente.valorPago (informativo)
+  changed_at TIMESTAMP NULL,             -- `dataAlteracao`
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+  FOREIGN KEY (insurance_id) REFERENCES insurances(id) ON DELETE SET NULL,
+  FOREIGN KEY (attendant_id) REFERENCES attendants(id) ON DELETE SET NULL,
+  CONSTRAINT lis_requisitions_number_key UNIQUE (tenant_id, number)
+);
+CREATE INDEX idx_lis_requisitions_tenant_requested ON lis_requisitions(tenant_id, requested_on);
+CREATE INDEX idx_lis_requisitions_tenant_doctor_crm
+  ON lis_requisitions(tenant_id, requesting_doctor_crm, requesting_doctor_uf)
+  WHERE requesting_doctor_crm IS NOT NULL;
+CREATE INDEX idx_lis_requisitions_insurance ON lis_requisitions(insurance_id);
+CREATE INDEX idx_lis_requisitions_attendant ON lis_requisitions(attendant_id);
+
+CREATE TABLE lis_requisition_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  requisition_id UUID NOT NULL,          -- ON DELETE CASCADE
+  payment_key VARCHAR(80) NOT NULL,      -- `id` do pagamento no Bitlab
+  paid_at TIMESTAMP NULL,
+  paid_on DATE NULL,
+  paid_value NUMERIC(12, 2) NOT NULL,
+  status VARCHAR(10) NOT NULL CHECK (status IN ('ativo', 'estornado')),
+  payment_method VARCHAR(60) NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  CONSTRAINT lis_requisition_payments_key UNIQUE (requisition_id, payment_key)
+);
+CREATE INDEX idx_lis_requisition_payments_tenant_paid
+  ON lis_requisition_payments(tenant_id, paid_on) WHERE status = 'ativo';
+```
+
+As duas tabelas têm a policy padrão de RLS (`*_tenant_isolation`) na mesma migração.
+
+- **Substituição, não merge:** a requisição alterada volta inteira do Bitlab. O upsert por
+  `(tenant_id, number)` sobrescreve todas as colunas, e os pagamentos dela são apagados e
+  regravados na mesma transação. Requisição em `requisicoesExcluidas` → `DELETE` (os pagamentos
+  vão junto, por cascata).
+- **Sem CHECK nos campos do Bitlab:** como na §53, a normalização é na borda e o valor estranho
+  vira `NULL`.
+- **Sem dado de paciente:** a API não manda, e o schema da borda descartaria se mandasse.
+- **Sem `import_id`:** a sincronização de requisições não passa por `lis_imports` (não há
+  conciliação com proposta). O histórico dela é o estado em `lis_sync_settings` (§31).
+- **Vínculo com `doctors`:** calculado na leitura, igual à §53 (D-335 item 5).
+
+**Colunas novas em `lis_sync_settings` (§31), na mesma migração:** `requisitions_watermark`
+(`VARCHAR(30)`, `YYYY-MM-DD HH:mm:ss` de Brasília), `requisitions_cursor` (`VARCHAR(120)`, último
+`proximoCursor` não vazio), `requisitions_load_next_day` (`DATE`, próximo dia da carga inicial;
+`NULL` = não começou ou terminou), `requisitions_load_started_at` (`VARCHAR(30)`, vira a marca no
+fim da carga), `requisitions_last_run_at`, `requisitions_last_success_at` (`TIMESTAMP`) e
+`requisitions_last_error` (`TEXT`). A carga terminou quando `requisitions_watermark` não é `NULL`.
+
 ## Row-Level Security (RLS) — implementado em `002_row_level_security.sql`
 
 O isolamento multitenant não é convenção: é imposto pelo banco. O backend conecta com o papel
@@ -2889,6 +2969,8 @@ Nenhum outro caminho de código deve usar `withoutTenant()`.
 | `doctor_specialties` | ✅ | migração `070_doctor_profile_expanded.sql` (tabela + policy no mesmo arquivo — CRMLAB-188), `tests/doctors/doctor-specialties.spec.ts` |
 | `visit_purposes` | ✅ | migração `073_visit_purposes.sql` (tabela + policy no mesmo arquivo — CRMLAB-190), `tests/db/migration-073-visit-purposes.spec.ts` |
 | `doctor_timeline_comments` | ✅ | migração `074_doctor_timeline_comments.sql` (tabela + policy no mesmo arquivo — CRMLAB-192), `tests/db/migration-074-doctor-timeline-comments.spec.ts` |
+| `lis_requisitions` | ✅ | migração `076_lis_requisitions.sql` (tabela + policy no mesmo arquivo — CRMLAB-200), `tests/db/migration-076-lis-requisitions.spec.ts` |
+| `lis_requisition_payments` | ✅ | idem |
 
 As **4 tabelas da migração 003** entram sob RLS na `004_rls_onda6.sql`, as **3 tabelas da
 migração 005** entram na `006_rls_onda7.sql`, e as **4 tabelas novas da migração 012**

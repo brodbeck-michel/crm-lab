@@ -5906,9 +5906,11 @@ opcionais; período com a mesma regra de `GET /lis-budgets/pending`, D-334)
 **Erros:** `VALIDATION_ERROR` (400, data fora do formato ou `endDate` antes de `startDate`),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
-#### GET /lis-budgets/by-doctor (CRMLAB-198, D-336)
+#### GET /lis-budgets/by-doctor (CRMLAB-198, D-336; fonte trocada na D-338)
 Faturamento por médico solicitante: o bloco de Resultados e o top 10 do PDF Executivo. Gestor/admin
-(o mesmo `router.use` das outras rotas desta seção). Sem cache.
+(o mesmo `router.use` das outras rotas desta seção). Sem cache. **Desde a D-338 (CRMLAB-200) lê
+`lis_requisitions`** (todas as requisições do Bitlab, com ou sem orçamento, SCHEMA §54), não mais
+`lis_budgets`. O shape não mudou.
 
 **Query Params:**
 ```
@@ -5940,12 +5942,13 @@ Faturamento por médico solicitante: o bloco de Resultados e o top 10 do PDF Exe
   "totals": { "requisitionCount": 17, "requisitionValue": 3620.5, "paidCount": 14, "paidValue": 3190 }
 }
 ```
-- **Requisição** (`requisitionCount`/`requisitionValue`): dedupe por requisição dos orçamentos
-  **emitidos** no período, a mesma do KPI `requisition` do summary (D-125).
-- **Recebido** (`paidCount`/`paidValue`): dedupe de todas as requisições, com `paid_on` no período e
-  `paid_value > 0`, a mesma do KPI `paid`. Um médico pode ter `requisitionCount: 0` e `paidValue > 0`.
-- **Médico da requisição:** o de qualquer linha da requisição com o médico preenchido, a mais
-  recente (`updated_at`).
+- **Requisição** (`requisitionCount`/`requisitionValue`): as requisições com **data da requisição**
+  (`requested_on`) no período. O valor é o do paciente (líquido) + o do convênio (BUSINESS_RULES
+  §11.13).
+- **Recebido** (`paidCount`/`paidValue`): soma dos pagamentos `ativo` do paciente com data no
+  período; `paidCount` conta as requisições com algum desses pagamentos. Um médico pode ter
+  `requisitionCount: 0` e `paidValue > 0`.
+- **Uma linha por requisição**, sem dedupe: a API manda cada requisição uma vez.
 - **`identified`:** CRM com pelo menos 3 dígitos e UF. A chave é `crm:<conselho>:<número>:<uf>`.
 - **Coringa do Bitlab:** CRM com menos de 3 dígitos (o CRM `1`, usado quando não há pedido médico
   ou quando pediu a enfermagem). Uma linha só, `doctorKey: "no-doctor"`, com nome, conselho, CRM e
@@ -5953,10 +5956,12 @@ Faturamento por médico solicitante: o bloco de Resultados e o top 10 do PDF Exe
 - **Sem médico:** `doctorKey: null`, uma linha só.
 - **`doctorId`:** cadastro casado por CRM + UF, só com o conselho `CRM` ou `null` (D-335 item 5).
   `responsibleName` é o nome do representante da carteira.
-- **Ordem:** `paidValue` desc, `requisitionValue` desc, nome. Sem top N e sem o mínimo de
-  `MIN_ORC_RANKING`.
-- **`totals`:** a soma das linhas devolvidas. Sem `responsibleId`, bate com os KPIs `requisition` e
-  `paid` do summary com os mesmos filtros.
+- **Filtros:** `insuranceId` e `attendantId` valem sobre o convênio e o usuário da requisição,
+  resolvidos pelo nome como no import (§11.4/§11.6).
+- **Ordem:** `requisitionValue` desc, `paidValue` desc, nome (D-338 item 4). Sem top N e sem o
+  mínimo de `MIN_ORC_RANKING`.
+- **`totals`:** a soma das linhas devolvidas. **Não** bate com os KPIs `requisition`/`paid` do
+  summary, que continuam só com orçamentos (D-338 item 1).
 
 **Erros:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403).
 
@@ -6011,9 +6016,29 @@ Configuração e disparo da sincronização dos orçamentos pela API de Orçamen
   "lastSuccessAt": "2026-09-25T14:00:00.000Z",
   "lastError": null,
   "running": false,
-  "intervalSeconds": 30
+  "intervalSeconds": 30,
+  "requisitions": {
+    "watermark": "2026-11-28 13:00:04",
+    "initialLoad": { "since": "2026-01-01", "nextDay": null, "done": true },
+    "lastRunAt": "2026-11-28T16:00:00.000Z",
+    "lastSuccessAt": "2026-11-28T16:00:09.000Z",
+    "lastError": null,
+    "running": false,
+    "scheduleTimes": ["07:00", "13:00"],
+    "total": 41230
+  }
 }
 ```
+- **`requisitions`** (CRMLAB-200, D-338): situação da sincronização de requisições, que usa a
+  mesma chave e o mesmo `enabled`.
+  - `initialLoad.done` = a carga inicial terminou (há marca d'água);
+  - `initialLoad.nextDay` = o próximo dia que a carga vai ler (`null` se não começou ou terminou).
+    A tela mostra o progresso entre `since` e hoje;
+  - `watermark` é `YYYY-MM-DD HH:mm:ss`, horário de Brasília;
+  - `scheduleTimes` são os horários do agendador, de Brasília, e vêm `[]` quando ele está
+    desligado neste servidor (hml);
+  - `total` é o número de requisições gravadas no tenant;
+  - `lastError` é a mensagem pronta para a tela e **não** desliga a sincronização de orçamentos.
 - Sem linha em `lis_sync_settings`: `enabled: false`, `apiKeySet: false`, `apiKeyMasked: null` e
   datas `null`. O `GET` não grava nada (D-065).
 - `lastError` é a mensagem em português da última falha, pronta para a tela (`"O Bitlab recusou a
@@ -6081,6 +6106,23 @@ geram audit: são do sistema, e o histórico delas é `lis_imports`/`lastRunAt`.
 **Erros:** `CONFLICT` (409, `details.reason: "lis_sync_running"` quando já há rodada em andamento
 para o tenant; `"lis_sync_not_configured"` quando a sincronização está desligada ou sem chave),
 `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
+
+#### POST /settings/lis-integration/requisitions/sync (CRMLAB-200, D-338)
+"Sincronizar requisições agora". Manager/admin. **Responde na hora e roda em segundo plano**: a
+carga inicial (de `LIS_REQUISITIONS_SINCE` até hoje, um dia por chamada) leva de 10 a 15 minutos.
+A rodada é a mesma do agendador: carga inicial enquanto ela não termina, e incremental depois.
+
+**Request:** corpo vazio.
+
+**Response (202):** o mesmo shape do `GET`, com `requisitions.running: true`. A tela acompanha
+pelo `GET` até `running` voltar a `false` e mostra `requisitions.lastError`, se houver. Falha do
+Bitlab não é erro HTTP.
+
+Gera audit log `run_lis_requisitions_sync` (quem disparou). As rodadas do agendador não geram audit.
+
+**Erros:** `CONFLICT` (409, `details.reason: "lis_requisitions_sync_running"` quando já há rodada
+de requisições em andamento no tenant; `"lis_sync_not_configured"` quando a sincronização está
+desligada ou sem chave), `FORBIDDEN` (403, `details.requiredRoles: ["manager","admin"]`)
 
 ## 11. Sales (Vendas + Comissão — Onda 9)
 
@@ -6602,9 +6644,10 @@ representante só vê a carteira dele; fora dela, ou de outro tenant, é `NOT_FO
   "lastRequisitionOn": "2026-11-20" }
 ```
 - A janela é dos **últimos 12 meses** (`DOCTOR_ABC_WINDOW_MONTHS`), a mesma da curva ABC:
-  `paidValue` é a base dela.
-- A requisição é contada pela emissão e o recebido pelo pagamento, com as mesmas regras de
-  `GET /lis-budgets/by-doctor`.
+  `requisitionValue` é a base dela desde a D-338 (era `paidValue`).
+- Lê `lis_requisitions` (D-338): a requisição é contada pela data da requisição e o recebido pela
+  data do pagamento, com as mesmas regras de `GET /lis-budgets/by-doctor`. `lastRequisitionOn` é a
+  maior data de requisição do médico, de qualquer época.
 - **`matched: false`:** o médico não tem CRM + UF no cadastro, e todos os números vêm `0` ou `null`.
 
 **Erros:** `NOT_FOUND` (404), `FORBIDDEN` (403, atendente/`platform_operator`).

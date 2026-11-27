@@ -2,7 +2,7 @@
 
 Arquivo de coordenação vivo. Todo agente atualiza aqui ao reivindicar, avançar ou concluir tarefas.
 
-**Última atualização:** 2026-11-26 (CRMLAB-201: orçamentos do Bitlab na API nova)
+**Última atualização:** 2026-11-27 (CRMLAB-200: requisições do Bitlab no faturamento por médico; CRMLAB-201 em prod)
 
 ---
 
@@ -4503,7 +4503,7 @@ Branch `feature/CRMLAB-199-ordenar-colunas`. Pedido do Michel depois do CRMLAB-1
 - Sem backend nem contrato. Testes: `DataTable.spec.tsx` (+4), `Results.spec.tsx` (+3, 1 ajustado) e
   `doctor-revenue-report.spec.ts` (+2).
 
-### 🔄 CRMLAB-201 — Orçamentos do Bitlab na API nova (2026-11-26, em homologação)
+### ✅ CRMLAB-201 — Orçamentos do Bitlab na API nova (2026-11-27, em prod na v1.54.2)
 
 Branch `feature/CRMLAB-201-bitlab-api-nova`. Decisão D-337. O Bitlab (Fernando, 26/11) passou a
 consulta de orçamentos para `api.bitlab.net.br`, com o mesmo retorno de antes, endereço novo e
@@ -4518,5 +4518,24 @@ chave nova.
 - **Validado na hml em 27/11:** deploy de `6c81e81`, chave de testes colada na tela e "Sincronizar
   agora" sem erro. Com a marca d'água da API antiga (24/11) vieram 0 orçamentos. Com ela limpa,
   vieram 1 orçamento e 1 proposta, e a marca d'água foi para `2026-10-29 10:30:37`.
-- **Falta:** o Bitlab liberar a chave de prod. A troca em prod segue a ordem da D-337 item 2:
-  deploy, colar a chave nova e religar a sync.
+- **Em prod em 27/11/2026:** v1.54.2 (`da6bfe7`), chave de prod colada às 14:40 UTC. Houve uma única
+  falha `401` entre o deploy e a chave, como previsto na D-337. A rodada das 11:58 (Brasília) trouxe os
+  orçamentos 72258 (virou a requisição 01-211958, com médico) e 72320, sem erro.
+
+### 🔄 CRMLAB-200 — Requisições do Bitlab no faturamento por médico (2026-11-27, em desenvolvimento)
+
+Branch `feature/CRMLAB-200-requisicoes-bitlab`. Decisão D-338. Escopo fechado com o Michel em 27/11.
+- **Fonte única do faturamento por médico:** `lis_requisitions` (migração 076, SCHEMA §54) recebe
+  todas as requisições do Bitlab, com ou sem orçamento. A partir dela saem Resultados, PDF, Excel,
+  ficha do médico e curva ABC. O resto continua com orçamentos.
+- **Valores:** requisição = paciente (líquido) + convênio, pela data da requisição. Recebido =
+  pagamentos ativos do paciente. A curva ABC passa a usar o valor da requisição.
+- **Sincronização** (`LisRequisitionSyncService`, SERVICES §24.2): carga inicial desde 01/01/2026, um
+  dia por vez e retomável; incremental às 07:00 e 13:00 de Brasília; 1,5 s entre chamadas; `429` com
+  nova tentativa; botão "Sincronizar requisições agora" (202).
+- Testes: `lis-requisition-sync.spec.ts` (11), `bitlab-requisitions-client.spec.ts` (3),
+  `migration-076-lis-requisitions.spec.ts` (2), `lis-doctor-revenue.spec.ts` e `doctor-abc.spec.ts`
+  reescritos para a fonte nova, `LisIntegration.spec.tsx` (+3).
+- **Falta:** validar na hml com a base de testes do Bitlab. Para prod: confirmar com o Bitlab se a
+  chave de prod vale para requisições; deploy → carga inicial → conferir total →
+  `POST /doctors/abc/recalculate`; avisar o laboratório de que os números por médico mudam.

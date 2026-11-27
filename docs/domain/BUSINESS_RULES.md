@@ -819,6 +819,40 @@ A API do Bitlab manda, por convênio n=1,2,3 (desde 23/10/2026; SERVICES.md §24
 - **Planilha:** não tem essas colunas; importa igual, com líquido = bruto. Reimportar pela
   planilha não apaga o desconto gravado pela API, a não ser que o bruto daquele convênio mude.
 
+
+### 11.13 Requisições do Bitlab e faturamento por médico (CRMLAB-200, D-338)
+A consulta de requisições do Bitlab traz **todas** as requisições, com ou sem orçamento. Elas
+moram em `lis_requisitions` (SCHEMA §54) e são a **fonte única** do faturamento por médico:
+Resultados, PDF Executivo, Excel, ficha do médico e curva ABC. **Nada mais muda:** conversão,
+Orçado, Em Requisição e Recebido do summary, Busca Ativa, ranking de atendente e propostas
+continuam só com `lis_budgets` (§11.1–§11.12). Misturar as fontes ali faria a conversão passar de
+100% e encheria a Busca Ativa de falso positivo.
+
+| Campo da API | Coluna | Conversão |
+|---|---|---|
+| `requisicao` | `number` | `trim` |
+| `dataRequisicao` | `requested_at` / `requested_on` | `dd/mm/aaaa hh:mm:ss` (Brasília) pelos componentes (D-187) |
+| `orcamento` | `budget_number` | `String(n)` sem zeros à esquerda; `null` = sem orçamento |
+| `convenio.codigo` / `nome` / `tipo` | `insurance_code` / `insurance_name` / `insurance_type` | crus |
+| `convenio.nome` | `insurance_id` | resolvido como §11.4 (`PARTICULAR` → `null`; inexistente é criado, D-114) |
+| `usuario` | `attendant_name` / `attendant_id` | resolvido como §11.6 (nunca cria) |
+| `medico.nome` / `conselho` / `numero` / `uf` | `requesting_doctor_*` | normalizados como D-335 item 1 |
+| `cobrancaPaciente.valorCobrado − descontos + acrescimos` | `patient_value` | líquido cobrado do paciente |
+| `faturamentoConvenio.valorConvenio` | `insurance_value` | previsão do convênio enquanto não faturado |
+| `cobrancaPaciente.pagamentos[]` | `lis_requisition_payments` | `situacao` `ESTORNADO` → `estornado`, o resto `ativo` |
+| `dataAlteracao` | `changed_at` | como `dataRequisicao` |
+| `taxas[]`, `valorExames`, `valorTaxas`, `saldo` | — | ignorados (já estão nos totais) |
+
+- **Valor da requisição** = `patient_value + insurance_value` (`total_value`). Conta pela **data
+  da requisição** (`requested_on`).
+- **Recebido** = soma dos pagamentos `ativo`, pela **data do pagamento** (`paid_on`). É só o que
+  o paciente pagou: a API não informa quando o convênio paga.
+- **Uma linha por requisição:** não há dedupe. A requisição alterada substitui a gravada, e a
+  excluída no Bitlab é apagada.
+- **Médico:** identificado, coringa (`no-doctor`, CRM com menos de 3 dígitos) e sem médico
+  (`null`), como D-336 item 2. O vínculo com `doctors` é por CRM + UF, conselho `CRM` ou vazio.
+- **Curva ABC:** a base é o valor da requisição dos últimos 12 meses (D-338 item 4).
+
 ---
 
 ## 12. Visitação Médica — cadastro de médicos (CRMLAB-86, D-255)

@@ -71,6 +71,30 @@ export interface LisIntegrationSettings {
   running: boolean;
   /** Intervalo do agendador em segundos (`LIS_SYNC_INTERVAL_MS / 1000`, D-249). `0` = agendador desligado. */
   intervalSeconds: number;
+  /** Sincronização das requisições (CRMLAB-200, D-338). Mesma chave e mesmo `enabled`. */
+  requisitions: LisRequisitionsSyncStatus;
+}
+
+/** Situação da sincronização de requisições (API_CONTRACTS §10.3, D-338). */
+export interface LisRequisitionsSyncStatus {
+  /** `YYYY-MM-DD HH:mm:ss`, horário de Brasília. `null` = carga inicial não terminou. */
+  watermark: string | null;
+  initialLoad: {
+    /** Primeiro dia da carga (`LIS_REQUISITIONS_SINCE`). */
+    since: IsoDate;
+    /** Próximo dia que a carga vai ler; `null` se não começou ou terminou. */
+    nextDay: IsoDate | null;
+    done: boolean;
+  };
+  lastRunAt: IsoDateTime | null;
+  lastSuccessAt: IsoDateTime | null;
+  /** Mensagem pronta para a tela. Não desliga a sincronização de orçamentos. */
+  lastError: string | null;
+  running: boolean;
+  /** Horários do agendador (`HH:mm`, Brasília). `[]` = agendador desligado neste servidor. */
+  scheduleTimes: string[];
+  /** Requisições gravadas no tenant. */
+  total: number;
 }
 
 /**
@@ -104,7 +128,8 @@ export type LisConflictReason =
   | 'lis_budget_number_taken'
   | 'lis_budgets_reconciled'
   | 'lis_sync_running'
-  | 'lis_sync_not_configured';
+  | 'lis_sync_not_configured'
+  | 'lis_requisitions_sync_running';
 
 // ---------------------------------------------------------------------------
 // Attendants (API_CONTRACTS.md §12)
@@ -317,10 +342,13 @@ export interface LisDoctorRevenueQuery {
 }
 
 export interface LisDoctorRevenueTotals {
-  /** Requisições dos orçamentos EMITIDOS no período (dedupe por requisição, D-125). */
+  /**
+   * Requisições com data da requisição no período (`lis_requisitions`, D-338). Valor = paciente
+   * (líquido) + convênio.
+   */
   requisitionCount: number;
   requisitionValue: number;
-  /** Requisições PAGAS no período (dedupe por requisição, `paid_value > 0`). */
+  /** Requisições com pagamento ativo do paciente no período; valor = soma desses pagamentos (D-338). */
   paidCount: number;
   paidValue: number;
 }
@@ -344,7 +372,7 @@ export interface LisDoctorRevenueRow extends LisDoctorRevenueTotals {
 
 export interface LisDoctorRevenueResponse {
   period: LisBudgetsPeriod;
-  /** Todas as linhas do período: `paidValue` desc, `requisitionValue` desc, nome. */
+  /** Todas as linhas do período: `requisitionValue` desc, `paidValue` desc, nome (D-338). */
   rows: LisDoctorRevenueRow[];
   /** Soma das linhas. */
   totals: LisDoctorRevenueTotals;

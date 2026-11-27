@@ -1336,7 +1336,8 @@ export interface LisAnalyticsService {
   listPending(ctx: TenantContext, query: ListPendingLisBudgetsQuery): Promise<ListPendingLisBudgetsResponse>;
   getPendingSummary(ctx: TenantContext, query: PendingLisBudgetsSummaryQuery): Promise<PendingLisBudgetsSummary>;
   getFilters(ctx: TenantContext): Promise<LisBudgetsFilters>;
-  // CRMLAB-198 (D-336): faturamento por médico, sem cache; SQL em lis-doctor-revenue.repository.ts
+  // CRMLAB-198 (D-336): faturamento por médico, sem cache; SQL em lis-doctor-revenue.repository.ts.
+  // Desde a D-338 (CRMLAB-200) lê lis_requisitions, não lis_budgets.
   getByDoctor(ctx: TenantContext, query: LisDoctorRevenueQuery): Promise<LisDoctorRevenueResponse>;
 }
 ```
@@ -1642,6 +1643,77 @@ Valor que não passa vira `null`. O upsert grava nas colunas da migração 075 (
   orçamento é relido a cada rodada, o que é inofensivo porque o upsert é idempotente.
 
 ---
+
+### 24.2 LisRequisitionSyncService — requisições do Bitlab (CRMLAB-200 — D-338)
+
+**Responsabilidade:** trazer **todas** as requisições do Bitlab para `lis_requisitions` (SCHEMA
+§54), a fonte do faturamento por médico. Usa a chave e o `enabled` de `lis_sync_settings` e grava o
+próprio estado nas colunas `requisitions_*` da mesma linha. Não passa por `LisImportService`
+nem por `lis_imports`: não há proposta para conciliar.
+
+```typescript
+export interface LisRequisitionSyncService {
+  /** Situação para o GET da tela (`LisIntegrationSettings.requisitions`). */
+  getStatus(tenantId: string): Promise<LisRequisitionsSyncStatus>;
+  /** manager/admin. Dispara em segundo plano e devolve na hora. CONFLICT
+   *  lis_requisitions_sync_running / lis_sync_not_configured. Audit run_lis_requisitions_sync. */
+  startNow(ctx: TenantContext): Promise<void>;
+  /** Agendador (main.ts, a cada 60 s). Roda os tenants ligados quando passou de um horário
+   *  de LIS_REQUISITIONS_SYNC_TIMES sem rodada desde então. Nunca lança. */
+  runScheduledTick(): Promise<void>;
+  /** A rodada de um tenant (carga inicial ou incremental). Exposta para teste e para o startNow. */
+  runForTenant(tenantId: string): Promise<void>;
+}
+```
+
+**Cliente** (`lib/bitlab-requisitions-client.ts`): `POST {BITLAB_API_BASE_URL}/requisicoes/consulta`
+com `x-api-key`, corpo `{ dataInicio, dataFim, tipoData, tamanhoPagina: 1000, cursor }`. Envelope
+validado com zod:
+- sucesso: `success: true`, `status`, `paginacao.temProxima`, `paginacao.proximoCursor`,
+  `marcaDagua`, `requisicoes[]` e `requisicoesExcluidas[]`;
+- erro: `success: false`, `status`, `error`.
+
+A conversão de status HTTP é a mesma do cliente de orçamentos (§24.1): `401`/`403` → `auth`; `429`
+e `5xx` → `unavailable`; envelope de erro → `rejected`; fora do schema → `contract`. As datas usam
+`parseBitlabDateTime` (D-187). O corpo cru nunca vai para log.
+
+**Uma rodada** (`runForTenant`):
+1. Trava em memória por tenant (separada da dos orçamentos). Lê a chave (`startRequisitionsRun`,
+   que decifra e grava `requisitions_last_run_at`). Sem chave ou desligado: não roda.
+2. **Carga inicial** (sem `requisitions_watermark`): grava `requisitions_load_started_at` = agora
+   (Brasília) na primeira vez. Depois, para cada dia de `requisitions_load_next_day` (ou
+   `LIS_REQUISITIONS_SINCE`) até hoje: lê o dia inteiro com `tipoData: "emissao"`, seguindo o
+   `cursor` enquanto `temProxima`. Grava as requisições e apaga as excluídas numa transação, e
+   avança `requisitions_load_next_day`. No fim: `requisitions_watermark` =
+   `requisitions_load_started_at`, `requisitions_load_next_day = NULL`.
+3. **Incremental:** janelas de no máximo 1 dia, de `requisitions_watermark` até agora, com
+   `tipoData: "alteracao"` e o `requisitions_cursor` guardado. Cada janela é lida inteira (todas as
+   páginas) e gravada numa transação. Depois:
+   - janela que não chegou em "agora" → marca = fim da janela;
+   - janela que chegou → marca = `marcaDagua` devolvida, ou a mesma se veio `null`;
+   - cursor = último `proximoCursor` não vazio.
+
+   No máximo 400 janelas e 200 páginas por janela.
+4. **Ritmo:** pelo menos `REQUISITIONS_CALL_GAP_MS` (1,5 s) entre chamadas. Um `429` espera 60 s
+   e tenta de novo a mesma chamada, até 3 vezes; depois disso a rodada falha `unavailable`.
+5. **Fim:** sucesso grava `requisitions_last_success_at = NOW()` e limpa
+   `requisitions_last_error`. Falha grava a mensagem pronta em `requisitions_last_error` e **não
+   desliga** nada, nem em `auth`. O que já foi gravado (dias da carga, janelas) fica: a próxima
+   rodada continua dali.
+6. Log: `lis_requisitions_sync.completed` (`info`, com `received`, `deleted` e `mode`) e
+   `lis_requisitions_sync.failed` (`warn`, com `kind`). Nada de corpo cru.
+
+**Gravação** (`LisRequisitionRepository.applyPage`, num `withTenant`):
+- convênio e atendente resolvidos pelo nome (`resolveInsuranceIdByName`,
+  `findAttendantIdByFoldedName`, os mesmos do import);
+- upsert por `(tenant_id, number)` sobrescrevendo tudo;
+- `DELETE` dos pagamentos da requisição e `INSERT` dos atuais;
+- `DELETE` das excluídas.
+
+**Agendador:** `main.ts` cria o tique só se `LIS_SYNC_INTERVAL_MS > 0` (desligado na hml) e
+`LIS_REQUISITIONS_SYNC_TIMES` não é vazio. A cada 60 s, para cada tenant ligado: se o horário de
+Brasília já passou de um dos horários de hoje e `requisitions_last_run_at` é anterior a ele, roda.
+Tenants em série. Um tique por vez.
 
 ## 25. LisReconcileService (CRMLAB-52 — D-119)
 
@@ -1956,6 +2028,11 @@ export interface DoctorAbcService {
   escopo da ficha.
 - As duas usam o mesmo SQL de "médico da requisição" de `lis-doctor-revenue.repository.ts`, o
   mesmo do `LisAnalyticsService.getByDoctor`. É o único lugar que liga `lis_budgets` a `doctors`.
+
+**CRMLAB-200 (D-338):** relatório, ficha e curva ABC passam a ler `lis_requisitions` (SCHEMA §54),
+sem dedupe. A base da ABC vira o **valor da requisição** (paciente + convênio) dos últimos 12
+meses, pela data da requisição. `lis-doctor-revenue.repository.ts` continua sendo o único lugar
+que liga o LIS a `doctors`, agora pelos campos do médico de `lis_requisitions`.
 
 O `ProposalService` lê `doctors` (id, nome, ativo — do próprio tenant) para validar `doctorId`;
 leitura de apoio, como o responsável acima.

@@ -7954,3 +7954,100 @@ Teste em homologação em 26/11/2026, com a chave de testes e a partir da máqui
 **Impacto:** `backend/src/lib/bitlab-client.ts` (caminho e `429`), `backend/src/config/env.ts`
 (padrão de `BITLAB_API_BASE_URL`), `docker-compose.prod.yml`, `backend/.env.example`;
 SERVICES §24.1, ENVIRONMENTS, DEPLOYMENT.
+
+### D-338: Requisições do Bitlab viram a fonte do faturamento por médico (todas, com ou sem orçamento)
+**Contexto:** CRMLAB-200. O faturamento por médico (D-336) só enxerga as requisições que vieram de
+orçamento, porque lê `lis_budgets`. O paciente que vai direto ao laboratório, quase sempre por
+convênio, fica de fora, e é justamente esse médico que a visitação quer ver. Em 26/11/2026 o Bitlab
+entregou a consulta de requisições na API nova (`POST {BITLAB_API_BASE_URL}/requisicoes/consulta`,
+mesma chave `x-api-key` da D-337). Ela traz **todas** as requisições, uma por item, com:
+- data da requisição e número do orçamento (`null` quando não houver);
+- convênio (código, nome e tipo `Particular`/`Convenio`/`Hibrido`);
+- médico (nome, conselho, número e UF) e o usuário que cadastrou;
+- cobrança do paciente (valor cobrado, descontos, acréscimos, valor pago e pagamentos com data);
+- faturamento do convênio (`valorConvenio`, previsão pela tabela enquanto não faturado);
+- requisições excluídas no período (`requisicoesExcluidas`);
+- nenhum dado do paciente.
+
+O envelope é diferente do de orçamentos: `success`/`error`, paginação por `cursor`, no máximo 1 dia
+por chamada e 1.000 por página. Escopo fechado com o dono do produto em 27/11/2026.
+**Decisão:**
+1. **Fonte única do faturamento por médico.** O relatório por médico em Resultados
+   (`GET /lis-budgets/by-doctor`), o top 10 do PDF Executivo, o Excel por médico (CRMLAB-199), a
+   ficha do médico (`GET /doctors/:id/revenue`) e a curva ABC passam a ler **só** de
+   `lis_requisitions`. Como a API traz todas as requisições, **não há junção nem dedupe** com
+   `lis_budgets`. Isso também aposenta, nesses relatórios, a dedupe por `paid_value DESC` e o "médico
+   da linha mais recente" da D-336 item 1. **Todo o resto continua só com orçamentos:** conversão,
+   Orçado, Em Requisição e Recebido do summary, Busca Ativa, ranking de atendente, conciliação com
+   proposta e KPIs comerciais. O médico em `lis_budgets` (D-335) continua sendo gravado, mas sai
+   destes relatórios.
+2. **Tabelas novas** (migração 076, SCHEMA §54):
+   - `lis_requisitions`: uma linha por requisição, `UNIQUE (tenant_id, number)`;
+   - `lis_requisition_payments`: os pagamentos dela, com `ON DELETE CASCADE`.
+
+   Ambas têm RLS na mesma migração. A requisição alterada volta inteira e **substitui** a gravada,
+   inclusive os pagamentos (apaga e regrava os da requisição). A que vier em
+   `requisicoesExcluidas` é apagada.
+3. **Valores** (definição do dono do produto):
+   - **valor da requisição** = valor do paciente + `faturamentoConvenio.valorConvenio`;
+   - **valor do paciente** = `cobrancaPaciente.valorCobrado − descontos + acréscimos`, o líquido
+     cobrado;
+   - **recebido** = soma dos pagamentos `ATIVO` do paciente, pela **data do pagamento**. Estornado
+     não conta. A API não informa quando o convênio paga, por isso o recebido é só do paciente.
+
+   No fio, `requisitionCount`/`requisitionValue` usam a **data da requisição** no período e
+   `paidCount`/`paidValue` os pagamentos no período. O shape de `LisDoctorRevenueResponse` não muda.
+4. **Curva ABC pelo valor da requisição** (substitui a base da D-336 item 7, escolha do dono do
+   produto em 27/11/2026): a base é o **valor da requisição** dos últimos 12 meses
+   (`DOCTOR_ABC_WINDOW_MONTHS`, pela data da requisição) das requisições do médico. Sem isso, o
+   médico que pede muito por convênio ficaria em C. Pareto, empate, base 0 = C e agenda não mudam.
+   A ordem padrão do relatório e do top 10 do PDF passa a ser `requisitionValue` desc, depois
+   `paidValue` desc, depois nome.
+5. **Médico, convênio e atendente:**
+   - o médico é normalizado como na D-335 item 1 (mesma função), e as regras de identificado,
+     coringa (`no-doctor`) e sem médico (`null`) da D-336 itens 2–3 valem iguais;
+   - o vínculo com `doctors` continua calculado na leitura (CRM + UF, conselho `CRM` ou vazio);
+   - convênio e atendente são resolvidos como no import do LIS, pelo nome (BUSINESS_RULES §11.4 e
+     §11.6). `PARTICULAR` vira `insurance_id = null`, e o convênio que não existe é criado
+     (D-114). Assim os filtros `insuranceId`/`attendantId` de Resultados continuam valendo.
+6. **Sincronização** (`LisRequisitionSyncService`, SERVICES §24.2). Usa a mesma chave e o mesmo
+   liga/desliga de `lis_sync_settings`, com estado próprio em colunas `requisitions_*` da mesma
+   tabela:
+   - **Carga inicial:** `tipoData: "emissao"`, um dia por vez, de `LIS_REQUISITIONS_SINCE`
+     (padrão `2026-01-01`) até hoje. Cada dia é gravado e marcado (`requisitions_load_next_day`)
+     antes do seguinte, então uma carga interrompida (deploy, queda, `429`) continua de onde parou.
+     Ao terminar, a marca d'água vira a hora em que a carga começou. O que mudou durante a carga
+     volta na primeira rodada incremental.
+   - **Incremental:** `tipoData: "alteracao"`, de `requisitions_watermark` até agora, em janelas
+     de no máximo 1 dia, mandando o `cursor` guardado (`requisitions_cursor`), como manda o
+     Bitlab. Janela lida por inteiro avança a marca para o fim dela. A última janela avança para a
+     `marcaDagua` devolvida. Uma rodada lê todas as páginas de uma janela antes de gravar; se
+     falhar, nada daquela janela é gravado e a marca não anda.
+   - **Ritmo:** pelo menos 1,5 s entre chamadas (no máximo 40/min, abaixo do limite de 60/min da
+     D-337). Um `429` na carga espera 60 s e tenta de novo, até 3 vezes. Fora isso, `429` é
+     `unavailable` e a próxima rodada continua.
+   - **Agendador:** **07:00 e 13:00** de Brasília (`LIS_REQUISITIONS_SYNC_TIMES`). O tique confere
+     a cada minuto se passou de um horário sem rodada desde então, e roda para cada laboratório com
+     a sincronização ligada. Só existe onde o agendador do LIS está ligado (`LIS_SYNC_INTERVAL_MS >
+     0`, então não na hml). Uma rodada por vez por laboratório, com trava em memória.
+   - **Falha:** fica em `requisitions_last_error`. **Não desliga** a sincronização de orçamentos,
+     nem quando é `auth`: a chave pode valer para um e não para o outro.
+7. **Tela Integração LIS** (PAGES §20): um bloco "Requisições" com a situação (carga inicial em X%,
+   última rodada, último erro e próximos horários) e o botão **"Sincronizar requisições agora"**,
+   para gestor/admin. O botão chama `POST /settings/lis-integration/requisitions/sync`, que
+   **responde 202 na hora** e roda em segundo plano: a carga inicial leva de 10 a 15 minutos. A tela
+   acompanha pelo `GET`. Audit log `run_lis_requisitions_sync`.
+8. **Ordem em prod:** deploy → "Sincronizar requisições agora" (carga inicial) → conferir o total →
+   `POST /doctors/abc/recalculate`. Enquanto a carga não termina, o relatório por médico mostra só
+   o que já entrou. Os totais por médico e a ABC **mudam**, e isso é esperado: requisição sem
+   orçamento, convênio no valor e data da requisição. Avisar o laboratório antes. A divisão
+   Particular/Convênio por médico fica para depois.
+**Impacto:** `backend/migrations/076_lis_requisitions.sql`; `backend/src/lib/bitlab-requisitions-client.ts`;
+`backend/src/repositories/{lis-requisition,lis-doctor-revenue,doctor-abc,lis-sync-settings,lis-import}.repository.ts`;
+`backend/src/services/{lis-requisition-sync,lis-sync}.service.ts`; `controllers/lis-sync.routes.ts`;
+`main.ts`; `config/env.ts`; `shared/types/lis.types.ts`; `frontend/src/pages/{LisIntegrationSettings,Results}`;
+SCHEMA §31/§54, BUSINESS_RULES §11.13, API_CONTRACTS §10.2/§10.3/§13, SERVICES §20/§24.2/§30,
+PAGES §14/§20/§22b, ENVIRONMENTS, DEPLOYMENT. Rota nova `POST
+/settings/lis-integration/requisitions/sync`. O inventário de isolamento (`route-tenant-isolation.spec.ts`)
+não muda, porque o módulo `/settings/lis-integration` não está nele hoje. O isolamento da rota nova é
+coberto em `tests/lis/lis-requisition-sync.spec.ts`.

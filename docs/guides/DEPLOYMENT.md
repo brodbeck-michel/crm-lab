@@ -124,7 +124,9 @@ fila usam adaptador in-memory — D-011) · `JWT_ACCESS_TTL` (900) ·
 `JWT_REFRESH_TTL` (604800) · `CORS_ORIGIN` (origem da UI) ·
 `RATE_LIMIT_PER_MINUTE` (300 no compose de prod desde D-289; 100 no código, dev/testes) · `BITLAB_API_BASE_URL` (`https://api.bitlab.net.br/v1`; na hml `https://api.bitlab.net.br/homologacao`, D-337) ·
 `LIS_SYNC_INTERVAL_MS` (30000 = 30 s desde o CRMLAB-79, D-249; era 2 min na D-199; **`0` desliga o agendador**, e "Sincronizar agora"
-continua funcionando) · `LIS_SYNC_INITIAL_DAYS` (90) — CRMLAB-52, D-185. A chave do Bitlab **não**
+continua funcionando) · `LIS_SYNC_INITIAL_DAYS` (90) — CRMLAB-52, D-185 · `LIS_REQUISITIONS_SINCE`
+(`2026-01-01`) e `LIS_REQUISITIONS_SYNC_TIMES` (`07:00,13:00`, Brasília; vazio desliga, e só roda
+com `LIS_SYNC_INTERVAL_MS > 0`) — requisições do Bitlab, CRMLAB-200, D-338. A chave do Bitlab **não**
 é env var: é por laboratório, cifrada no banco, e colada pelo admin em Configurações → Integração
 LIS. `FUNNEL_TIMER_INTERVAL_MS` (300000 = 5 min; **`0` desliga** o motor de tempo do funil,
 CRMLAB-59, D-205): a cada tique os cartões parados andam pelos prazos das Regras e sai o alerta

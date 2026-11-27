@@ -182,7 +182,8 @@ Sem código novo: tudo é `CONFLICT` (409), e o motivo vem em `details.reason`.
 | `lis_budget_number_taken` | `PATCH /proposals/:id/lis-reference` | Outra proposta do tenant já usa esse nº de orçamento do LIS (`details.proposalNumber`) |
 | `lis_budgets_reconciled` | `POST /lis-imports/purge` | Há `lis_budgets` vinculados a propostas. Limpar apagaria a conciliação (`details.linkedCount`) |
 | `lis_sync_running` | `POST /settings/lis-integration/sync` | Já há uma rodada em andamento para o tenant (agendador ou outro clique) |
-| `lis_sync_not_configured` | `POST /settings/lis-integration/sync` | Sincronização desligada ou sem chave |
+| `lis_sync_not_configured` | `POST /settings/lis-integration/sync`, `POST /settings/lis-integration/requisitions/sync` | Sincronização desligada ou sem chave |
+| `lis_requisitions_sync_running` | `POST /settings/lis-integration/requisitions/sync` | Já há uma rodada de requisições em andamento para o tenant (CRMLAB-200, D-338) |
 
 Falha **do Bitlab** (chave recusada, timeout, resposta fora do contrato) **não** é erro HTTP do
 CRM: o `POST .../sync` responde `200` com `status: "failed"` e `error.kind` (API_CONTRACTS.md

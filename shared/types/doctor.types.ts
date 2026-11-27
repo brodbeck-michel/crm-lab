@@ -230,7 +230,7 @@ export const DOCTOR_ABC_WINDOW_MONTHS = 12;
 
 /**
  * Faturamento do médico no LIS, últimos `DOCTOR_ABC_WINDOW_MONTHS` meses — `GET /doctors/:id/revenue`
- * (CRMLAB-198, D-336 item 6). `paidValue` é a base da curva ABC.
+ * (CRMLAB-198, D-336 item 6; requisições na D-338). `requisitionValue` é a base da curva ABC.
  */
 export interface DoctorRevenue {
   /** O médico tem CRM + UF no cadastro (sem isso, nada casa e tudo vem zerado). */
